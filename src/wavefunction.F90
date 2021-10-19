@@ -59,14 +59,14 @@ contains
     type(type_vec_p), intent(in) :: self, rwf
     real(8) :: r, x
     integer(kdim) :: mq
-    real(16) :: q, y, qg(nprocs)
+    real(8) :: q, y, qg(nprocs)
 
 !    if (.not. associated(self%ptn, rwf%ptn)) stop "ERROR: dot_product_global"
 
     if (.false. .and. kwf==8) then
 !    if (kwf==8) then
        ! real(16) sum ... slow at SPARC
-       q = 0.q0
+       q = 0.d0
        !$omp parallel do private(mq) reduction (+: q)
        do mq = 1, size(self%p, kind=kdim)
           q = q + self%p(mq) * rwf%p(mq)
