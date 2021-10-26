@@ -469,9 +469,9 @@ contains
 #ifdef MPI    
     integer(mpi_offset_kind) :: head, offset
     integer :: mpi_status(mpi_status_size)
-    integer :: jon1, jon4, jon5, jon6(mpi_status_size), jon7
-    integer(kind=mpi_offset_kind) :: jon2
-    real(8), pointer :: jon3(:) => null()
+    integer :: jon1, jon4, jon5, jon6(mpi_status_size), jon7 ! DEBUG
+    integer(kind=mpi_offset_kind) :: jon2 ! DEBUG
+    real(8), pointer :: jon3(:) => null() ! DEBUG
 #ifndef SPARC
    !  integer(kdim) :: local_dim
    integer :: local_dim
@@ -512,7 +512,7 @@ contains
           offset = head + mq * kwf
           local_dim = ptn%local_dim
           call mpi_file_read_at_all(fh, offset, self(i)%p, local_dim, mpi_kwf, mpi_status, ierr)
-         !  call mpi_file_read_at_all(fh, offset, self(i)%p, jon4, mpi_kwf, mpi_status, ierr)
+         !  call mpi_file_read_at_all(fh, offset, self(i)%p, jon4, mpi_kwf, mpi_status, ierr) ! DEBUG
           if (ierr/=0) write(*,*) "error bp_load_wf_srt", &
                myrank, ierr, offset, ptn%local_dim
        else
