@@ -608,7 +608,8 @@ contains
     integer(mpi_offset_kind) :: offset
     integer :: fh, mympi_stat(mpi_status_size)
 #ifndef SPARC
-    integer(kdim) :: l_dim
+!     integer(kdim) :: l_dim
+    integer :: l_dim
 #else
     integer :: l_dim
 #endif
@@ -684,7 +685,8 @@ contains
     integer(mpi_offset_kind) :: offset
     integer :: fh, mympi_stat(mpi_status_size)
 #ifndef SPARC
-    integer(kdim) :: l_dim
+!     integer(kdim) :: l_dim
+    integer :: l_dim
 #else
     integer :: l_dim
 #endif
@@ -767,7 +769,8 @@ contains
     integer(mpi_offset_kind) :: offset
     integer :: fh, mympi_stat(mpi_status_size)
 #ifndef SPARC
-    integer(kdim) :: l_dim
+!     integer(kdim) :: l_dim
+    integer :: l_dim
 #else
     integer :: l_dim
 #endif
@@ -834,7 +837,8 @@ contains
     integer(mpi_offset_kind) :: offset
     integer :: fh, mympi_stat(mpi_status_size)
 #ifndef SPARC
-    integer(kdim) :: l_dim
+!     integer(kdim) :: l_dim
+    integer :: l_dim
 #else
     integer :: l_dim
 #endif
