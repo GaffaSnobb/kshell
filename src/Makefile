@@ -3,8 +3,8 @@
 # FC = mpiifort
 
 # --- GNU Fortran compiler 
-FC = gfortran
-# FC = mpifort
+# FC = gfortran
+FC = mpifort
 
 all: kshell.exe transit.exe count_dim.exe
 	cp kshell.exe transit.exe count_dim.exe ../bin/
@@ -21,7 +21,8 @@ ifneq ($(findstring mpiifort, $(FC)), )
 endif
 
 ifneq ($(findstring mpifort, $(FC)), )
-  FFLAGS =  -O3 -fopenmp -DMPI -fc=gfortran-11 -fallow-argument-mismatch
+  # FFLAGS =  -O3 -fopenmp -DMPI -fc=gfortran-11 -fallow-argument-mismatch
+  FFLAGS =  -O3 -fopenmp -DMPI -fallow-argument-mismatch
   LIBS = -llapack -lblas -lm
 endif
 
