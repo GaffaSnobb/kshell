@@ -7,7 +7,7 @@ module bridge_partitions
   use mpi 
 #endif
   use constant, only: kwf, kmbit, kdim, maxchar, c_no_init, &
-       mpi_kwf, mpi_kdim, mpi_kmbit, max_n_jorb
+       mpi_kwf, mpi_kdim, mpi_kmbit, max_n_j_orbitals
   use model_space
   use partition, only: init_partition, type_ptn_pn, type_mbit, &
        bin_srch_nocc
@@ -21,7 +21,7 @@ module bridge_partitions
   private
   public :: type_bridge_partitions, init_bridge_partitions, &
        finalize_bridge_partitions, finalize_bp_operator, &
-       init_bp_operator, bp_operate, ex_val, eig_residual, &
+       init_bp_operator, bp_operate, expectation_value, eig_residual, &
        init_mpi_shift_reduce
   
   ! ONLY for bp_expc_val, transit, bp_block
@@ -170,7 +170,7 @@ contains
     !$ nt = omp_get_max_threads()
 
 
-    if (max_n_jorb < maxval(n_jorb)) stop "ERROR: increase max_n_jorb"
+    if (max_n_j_orbitals < maxval(n_j_orbitals)) stop "ERROR: increase max_n_j_orbitals"
 
     verb = .false. 
     if (verbose_h==0 .and. verbose_jj==0 .and. myrank==0) verb = .true.
@@ -200,7 +200,7 @@ contains
 #else 
     self%idl_se(:,0) = se
 #endif /* MPI */
-    ndim_thrd = max( max_npsize / (maxval(jorb) + 1) , 1)
+    ndim_thrd = max( max_npsize / (maxval(j_orbitals) + 1) , 1)
     if (verb) write(*,'(a,i8)') 'maximum threshold dim. for working area', ndim_thrd
     
     allocate( self%ml(0:nprocs_reduce-1) )
@@ -277,141 +277,144 @@ contains
     deallocate( p_ik, n_jl ) 
   end subroutine finalize_bridge_partitions
 
-
-
-
   subroutine init_bp_operator(self, op, verbose)
-    type(type_bridge_partitions), intent(inout) :: self
-    type(opr_m), intent(inout) :: op
-    logical, intent(in), optional :: verbose
-    integer :: idl, ml, mr, mm
-    integer :: n_idcnct( nprocs_shift ), &
+      !
+      !
+      ! Parameters
+      ! ----------
+      ! verbose : logical
+      !     Toggle stopwatch on / off.
+      type(type_bridge_partitions), intent(inout) :: self
+      type(opr_m), intent(inout) :: op
+      logical, intent(in), optional :: verbose
+      integer :: idl, ml, mr, mm
+      integer :: n_idcnct( nprocs_shift ), &
          idcnct( maxval(self%ptnr%rank2ntask), nprocs_shift )
-    type(type_ptn_pn), pointer :: pl, pr
-    integer(kdim) :: nptnc, max_nptnc, min_nptnc
-    integer :: ms1, ms2
-    logical :: verb
-    verb = .false.
-    if (present(verbose)) verb = verbose
+      type(type_ptn_pn), pointer :: pl, pr
+      integer(kdim) :: nptnc, max_nptnc, min_nptnc
+      integer :: ms1, ms2
+      logical :: verb
+      verb = .false.
+      if (present(verbose)) verb = verbose
 
-    if (verb) call start_stopwatch(time_tmp, is_reset=.true.)
+      if (verb) call start_stopwatch(time_tmp, is_reset=.true.)
 
-    pl => self%ptnl
-    pr => self%ptnr
-    if (op%nbody == 2 .and. (.not. associated(pl, pr))) stop "not implemented"
-    if (op%nbody == -10 .or. op%nbody == -11) then
-       if ( self%ptnl%n_ferm(1) == self%ptnr%n_ferm(1) + 1 ) op%nbody = -10
-       if ( self%ptnl%n_ferm(2) == self%ptnr%n_ferm(2) + 1 ) op%nbody = -11
-    end if
-    
-    if ( allocated(op%mlmr) ) call finalize_bp_operator(self, op)
+      pl => self%ptnl
+      pr => self%ptnr
+      if (op%nbody == 2 .and. (.not. associated(pl, pr))) stop "not implemented"
+      if (op%nbody == -10 .or. op%nbody == -11) then
+         if ( self%ptnl%n_ferm(1) == self%ptnr%n_ferm(1) + 1 ) op%nbody = -10
+         if ( self%ptnl%n_ferm(2) == self%ptnr%n_ferm(2) + 1 ) op%nbody = -11
+      end if
+      
+      if ( allocated(op%mlmr) ) call finalize_bp_operator(self, op)
 
-    allocate( op%mlmr(0:nprocs_reduce-1, 0:nprocs_shift-1) )
-    do ml = 0, nprocs_reduce-1
-       do mr = 0, nprocs_shift-1
-          allocate( op%mlmr(ml,mr)%idl( self%idl_se(1,ml) : self%idl_se(2,ml) ) )
-       end do
-    end do
+      allocate( op%mlmr(0:nprocs_reduce-1, 0:nprocs_shift-1) )
+      do ml = 0, nprocs_reduce-1
+         do mr = 0, nprocs_shift-1
+            allocate( op%mlmr(ml,mr)%idl( self%idl_se(1,ml) : self%idl_se(2,ml) ) )
+         end do
+      end do
 
-    ms1 = myrank_reduce * nprocs_shift 
-    ms2 = (myrank_reduce + 1) * nprocs_shift - 1 
+      ms1 = myrank_reduce * nprocs_shift 
+      ms2 = (myrank_reduce + 1) * nprocs_shift - 1 
 
-    do ml = 0, nprocs_reduce-1
-       !$omp parallel do private(idl, n_idcnct, idcnct, mr, mm) &
-       !$omp schedule (dynamic)
-       do idl = self%idl_se(1,ml), self%idl_se(2,ml)
-          if (op%nbody == 0) then
-             call ptn_connect_zerobody(idl, n_idcnct, idcnct )
-          else if (op%nbody == 1) then
-             call ptn_connect_onebody( idl, n_idcnct, idcnct )
-          else if (op%nbody == 2) then          
-             call ptn_connect_twobody( idl, n_idcnct, idcnct )
-          else if (op%nbody == -10 .or. op%nbody == -11) then          
-             call ptn_connect_ob_gt(   idl, n_idcnct, idcnct )
-          else if (op%nbody == -12 .or. op%nbody == -13) then 
-             call ptn_connect_tb_beta( idl, n_idcnct, idcnct )
-          else if (op%nbody == -1 .or. op%nbody == -2) then
-             call ptn_connect_one_crt( idl, n_idcnct, idcnct )
-          else if (op%nbody == -3 .or. op%nbody == -4) then
-             call ptn_connect_two_crt( idl, n_idcnct, idcnct )
-          else if (op%nbody == -5) then
-             call ptn_connect_pn_crt( idl, n_idcnct, idcnct )
-          else if (op%nbody == -6 .or. op%nbody == -7) then
-             call ptn_connect_one_anh( idl, n_idcnct, idcnct )
-          else if (op%nbody ==  5) then  ! TBTD
-             call ptn_connect_twobody( idl, n_idcnct, idcnct )
-          else
-             stop " not implemented init_bp_operator"
-          end if
-          do mr = 0, nprocs_shift - 1
-             ! mm = mr + myrank_reduce*nprocs_shift
-             mm = mr + 1
-             op%mlmr(ml,mr)%idl(idl)%n = n_idcnct(mm)
-             if ( allocated( op%mlmr(ml,mr)%idl(idl)%id ) ) then
-                write(*,'(a,3i5)') 'WARNING: bug ????? ',ml,mr,idl
-                deallocate( op%mlmr(ml,mr)%idl(idl)%id )
-             end if
-             allocate( op%mlmr(ml,mr)%idl(idl)%id( n_idcnct(mm) ) )
-             op%mlmr(ml,mr)%idl(idl)%id(:) = idcnct(:n_idcnct(mm), mm)
-          end do
-       end do
-    end do
+      do ml = 0, nprocs_reduce-1
+         !$omp parallel do private(idl, n_idcnct, idcnct, mr, mm) &
+         !$omp schedule (dynamic)
+         do idl = self%idl_se(1,ml), self%idl_se(2,ml)
+            if (op%nbody == 0) then
+               call ptn_connect_zerobody(idl, n_idcnct, idcnct )
+            else if (op%nbody == 1) then
+               call ptn_connect_onebody( idl, n_idcnct, idcnct )
+            else if (op%nbody == 2) then          
+               call ptn_connect_twobody( idl, n_idcnct, idcnct )
+            else if (op%nbody == -10 .or. op%nbody == -11) then          
+               call ptn_connect_ob_gt(   idl, n_idcnct, idcnct )
+            else if (op%nbody == -12 .or. op%nbody == -13) then 
+               call ptn_connect_tb_beta( idl, n_idcnct, idcnct )
+            else if (op%nbody == -1 .or. op%nbody == -2) then
+               call ptn_connect_one_crt( idl, n_idcnct, idcnct )
+            else if (op%nbody == -3 .or. op%nbody == -4) then
+               call ptn_connect_two_crt( idl, n_idcnct, idcnct )
+            else if (op%nbody == -5) then
+               call ptn_connect_pn_crt( idl, n_idcnct, idcnct )
+            else if (op%nbody == -6 .or. op%nbody == -7) then
+               call ptn_connect_one_anh( idl, n_idcnct, idcnct )
+            else if (op%nbody ==  5) then  ! TBTD
+               call ptn_connect_twobody( idl, n_idcnct, idcnct )
+            else
+               stop " not implemented init_bp_operator"
+            end if
+            do mr = 0, nprocs_shift - 1
+               ! mm = mr + myrank_reduce*nprocs_shift
+               mm = mr + 1
+               op%mlmr(ml,mr)%idl(idl)%n = n_idcnct(mm)
+               if ( allocated( op%mlmr(ml,mr)%idl(idl)%id ) ) then
+                  write(*,'(a,3i5)') 'WARNING: bug ????? ',ml,mr,idl
+                  deallocate( op%mlmr(ml,mr)%idl(idl)%id )
+               end if
+               allocate( op%mlmr(ml,mr)%idl(idl)%id( n_idcnct(mm) ) )
+               op%mlmr(ml,mr)%idl(idl)%id(:) = idcnct(:n_idcnct(mm), mm)
+            end do
+         end do
+      end do
 
 
-    if (verb) then 
-       call stop_stopwatch(time_tmp)
-       if (myrank==0) write(*, '(a, f10.3, a/)') &
+      if (verb) then 
+         call stop_stopwatch(time_tmp)
+         if (myrank==0) write(*, '(a, f10.3, a/)') &
             "init_bp_operator time it took was:", time_tmp%time, " sec"
-       call reset_stopwatch(time_tmp)
-    end if
+         call reset_stopwatch(time_tmp)
+      end if
 
 #ifdef MPI
-    call mpi_barrier(mpi_comm_world, ierr)
+      call mpi_barrier(mpi_comm_world, ierr)
 #endif
-    nptnc = 0
-    do ml = 0, nprocs_reduce-1
-       do idl = self%idl_se(1,ml), self%idl_se(2,ml)
-          do mr = 0, nprocs_shift - 1
-             nptnc = nptnc + op%mlmr(ml,mr)%idl(idl)%n
-          end do
-       end do
-    end do
-    min_nptnc = nptnc
-    max_nptnc = nptnc
+      nptnc = 0
+      do ml = 0, nprocs_reduce-1
+         do idl = self%idl_se(1,ml), self%idl_se(2,ml)
+            do mr = 0, nprocs_shift - 1
+               nptnc = nptnc + op%mlmr(ml,mr)%idl(idl)%n
+            end do
+         end do
+      end do
+      min_nptnc = nptnc
+      max_nptnc = nptnc
 #ifdef MPI
-    call mpi_allreduce(nptnc, min_nptnc, 1, mpi_kdim, mpi_min, &
+      call mpi_allreduce(nptnc, min_nptnc, 1, mpi_kdim, mpi_min, &
          mpi_comm_world, ierr)
-    call mpi_allreduce(nptnc, max_nptnc, 1, mpi_kdim, mpi_max, &
+      call mpi_allreduce(nptnc, max_nptnc, 1, mpi_kdim, mpi_max, &
          mpi_comm_world, ierr)
 #endif
-    if (verb .and. myrank==0) write(*,'(a,2i12)') &
+      if (verb .and. myrank==0) write(*,'(a,2i12)') &
          " max/min # of connected ptns / proc", max_nptnc, min_nptnc
-    if (is_debug) write(*,'(a,i12,a,i6)') &
+      if (is_debug) write(*,'(a,i12,a,i6)') &
          " # of connected ptns / proc", nptnc, "  at rank",myrank
-    if (myrank==0 .and. verb) &
+      if (myrank==0 .and. verb) &
          write(*,'(/,a,f12.6,a,/)') 'init_bp_op allocated mem size', &
          max_nptnc*4./1024.d0/1024.d0/1024.d0, ' GB'
 
 #ifdef MPI
-    call mpi_barrier(mpi_comm_world, ierr)
-    if (myrank==0 .and. verb) write(*,*)
+      call mpi_barrier(mpi_comm_world, ierr)
+      if (myrank==0 .and. verb) write(*,*)
 #endif
 
-  contains
+   contains
 
-    subroutine ptn_connect_zerobody(idl, n_idcnct, idcnct)
+      subroutine ptn_connect_zerobody(idl, n_idcnct, idcnct)
       ! right partition of "idl", only for transformation (copy)
       integer, intent(in) :: idl
       integer, intent(out) :: idcnct(:,:), n_idcnct(:)
       integer :: pnMl(3), pnMr(3), mr, ipn, idr, idrs, &
-           nocl(max_n_jorb, 2)
+            nocl(max_n_j_orbitals, 2)
       n_idcnct(:) = 0
       nocl(:,:) = 0
       pnMl = pl%pidpnM_pid(:,idl)
       do ipn = 1, 2
-         nocl(:n_jorb(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
-         call bin_srch_nocc(nocl(:n_jorb(ipn), ipn), &
-              pr%pn(ipn)%nocc, pnMr(ipn))
+         nocl(:n_j_orbitals(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
+         call bin_srch_nocc(nocl(:n_j_orbitals(ipn), ipn), &
+               pr%pn(ipn)%nocc, pnMr(ipn))
          if (pnMr(ipn)==0) return
       end do
       pnMr(3) = pnMl(3)
@@ -423,31 +426,31 @@ contains
       mr = mr - ms1 + 1
       n_idcnct(mr) = 1
       idcnct(1, mr) = idr
-    end subroutine ptn_connect_zerobody
+      end subroutine ptn_connect_zerobody
 
-    subroutine ptn_connect_onebody(idl, n_idcnct, idcnct)
+      subroutine ptn_connect_onebody(idl, n_idcnct, idcnct)
       ! right partition list connected to "idl" 
       !  rank non-zero proton one-body, neutron one-body operator
       integer, intent(in) :: idl
       integer, intent(out) :: idcnct(:,:), n_idcnct(:)
       integer :: n1, n3, i, pnMl(3), pnMr(3), &
-           n_occd(2), mr, ipn, idr, idrs, &
-           nocl(max_n_jorb, 2), nocr(max_n_jorb, 2), &
-           occd(max_n_jorb, 2)
+            n_occd(2), mr, ipn, idr, idrs, &
+            nocl(max_n_j_orbitals, 2), nocr(max_n_j_orbitals, 2), &
+            occd(max_n_j_orbitals, 2)
 
       n_idcnct(:) = 0
       nocl(:,:) = 0
       pnMl = pl%pidpnM_pid(:,idl)
       do ipn = 1, 2
-         nocl(:n_jorb(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
+         nocl(:n_j_orbitals(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
          n_occd(ipn) = 0
-         do i = 1, n_jorb(ipn)
+         do i = 1, n_j_orbitals(ipn)
             if (nocl(i, ipn) == 0) cycle
             n_occd(ipn) = n_occd(ipn) + 1
             occd(n_occd(ipn), ipn) = i
          end do
-         call bin_srch_nocc(nocl(:n_jorb(ipn), ipn), &
-              pr%pn(ipn)%nocc, pnMl(ipn))
+         call bin_srch_nocc(nocl(:n_j_orbitals(ipn), ipn), &
+               pr%pn(ipn)%nocc, pnMl(ipn))
       end do
 
       ! 0p0h one-body 
@@ -471,15 +474,15 @@ contains
          if (pnMl(3-ipn) == 0) cycle
          do i = 1, n_occd(ipn)
             n1 = occd(i, ipn)
-            do n3 = 1, n_jorb(ipn)
+            do n3 = 1, n_j_orbitals(ipn)
                if (n1==n3) cycle
-               if (nocl(n3, ipn) == jorbn(n3, ipn)+1) cycle
+               if (nocl(n3, ipn) == j_orbitalsn(n3, ipn)+1) cycle
                nocr = nocl
                nocr(n1, ipn) = nocr(n1, ipn) - 1
                nocr(n3, ipn) = nocr(n3, ipn) + 1
                pnMr = pnMl
-               call bin_srch_nocc(nocr(:n_jorb(ipn), ipn), &
-                    pr%pn(ipn)%nocc, pnMr(ipn))
+               call bin_srch_nocc(nocr(:n_j_orbitals(ipn), ipn), &
+                     pr%pn(ipn)%nocc, pnMr(ipn))
                if (pnMr(ipn) == 0) cycle
                if (ipn == 1) pnMr(3) = pnMl(3) - pl%mtotal + pr%mtotal
                call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
@@ -491,27 +494,27 @@ contains
                n_idcnct(mr) = n_idcnct(mr) + 1
                if (n_idcnct(mr) > size(idcnct,1)) stop 'increase size of idcnct'
                idcnct(n_idcnct(mr), mr) = idr
-             end do
+               end do
          end do
       end do
-    end subroutine ptn_connect_onebody
-    
+      end subroutine ptn_connect_onebody
+      
 
-    subroutine ptn_connect_twobody(idl, n_idcnct, idcnct)
+      subroutine ptn_connect_twobody(idl, n_idcnct, idcnct)
       integer, intent(in) :: idl
       integer, intent(out) :: idcnct(:,:),n_idcnct(:)
       integer :: n1, n2, n3, n4, i, j, pnMl(3), pnMm(3), pnMr(3), &
-           mi, mj, max_mp, min_mp, n_occd(2), mm, mr, ipn, idr, idrs, &
-           nocl(max_n_jorb, 2), nocm(max_n_jorb, 2), &
-           nocr(max_n_jorb, 2), occd(max_n_jorb, 2)
+            mi, mj, max_mp, min_mp, n_occd(2), mm, mr, ipn, idr, idrs, &
+            nocl(max_n_j_orbitals, 2), nocm(max_n_j_orbitals, 2), &
+            nocr(max_n_j_orbitals, 2), occd(max_n_j_orbitals, 2)
 
       n_idcnct(:) = 0
       nocl(:,:) = 0
       pnMl = pl%pidpnM_pid(:,idl)
       do ipn = 1, 2
-         nocl(:n_jorb(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
+         nocl(:n_j_orbitals(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
          n_occd(ipn) = 0
-         do i = 1, n_jorb(ipn)
+         do i = 1, n_j_orbitals(ipn)
             if (nocl(i, ipn) == 0) cycle
             n_occd(ipn) = n_occd(ipn) + 1
             occd(n_occd(ipn), ipn) = i
@@ -521,9 +524,9 @@ contains
       ! 0p0h 
       pnMr = pnMl
       min_mp = max( pr%pn(1)%id(pnMr(1))%min_m, &
-           pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m )
+            pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m )
       max_mp = min( pr%pn(1)%id(pnMr(1))%max_m, &
-           pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m )
+            pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m )
       pnMr(3) = min_mp
       call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
       do mm = min_mp, max_mp, 2
@@ -549,20 +552,20 @@ contains
       do ipn = 1, 2
          do i = 1, n_occd(ipn)
             n1 = occd(i, ipn)
-            do n3 = 1, n_jorb(ipn)
+            do n3 = 1, n_j_orbitals(ipn)
                if (n1 == n3) cycle
-               if (nocl(n3, ipn) == jorbn(n3, ipn)+1) cycle
+               if (nocl(n3, ipn) == j_orbitalsn(n3, ipn)+1) cycle
                nocr = nocl
                nocr(n1, ipn) = nocr(n1, ipn) - 1
                nocr(n3, ipn) = nocr(n3, ipn) + 1
                pnMr = pnMl
-               call bin_srch_nocc(nocr(:n_jorb(ipn), ipn), &
-                    pr%pn(ipn)%nocc, pnMr(ipn))
+               call bin_srch_nocc(nocr(:n_j_orbitals(ipn), ipn), &
+                     pr%pn(ipn)%nocc, pnMr(ipn))
                if (pnMr(ipn)==0) cycle
                min_mp = max( pr%pn(1)%id(pnMr(1))%min_m, &
-                    pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m)
+                     pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m)
                max_mp = min( pr%pn(1)%id(pnMr(1))%max_m, &
-                    pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m)
+                     pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m)
                if (min_mp>max_mp) cycle
                pnMr(3) = min_mp
                call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
@@ -584,33 +587,33 @@ contains
       ! pn-int 2p2h
       do i = 1, n_occd(1)
          n1 = occd(i, 1)
-         do n3 = 1, n_jorb(1)
+         do n3 = 1, n_j_orbitals(1)
             if (n1==n3) cycle
-            if (nocl(n3, 1) == jorbn(n3, 1)+1) cycle
+            if (nocl(n3, 1) == j_orbitalsn(n3, 1)+1) cycle
             nocm = nocl
             nocm(n1, 1) = nocm(n1, 1) - 1
             nocm(n3, 1) = nocm(n3, 1) + 1
             pnMm = pnMl
-            call bin_srch_nocc(nocm(:n_jorb(1), 1), &
-                 pr%pn(1)%nocc, pnMm(1))
+            call bin_srch_nocc(nocm(:n_j_orbitals(1), 1), &
+                  pr%pn(1)%nocc, pnMm(1))
             if (pnMm(1)==0) cycle
             do j = 1, n_occd(2)
                n2 = occd(j, 2)
-               do n4 = 1, n_jorb(2)
+               do n4 = 1, n_j_orbitals(2)
                   if (n2==n4) cycle
-                  if (nocm(n4, 2) == jorbn(n4, 2)+1) cycle
+                  if (nocm(n4, 2) == j_orbitalsn(n4, 2)+1) cycle
                   if (.not. allocated( op%nocc2b(3,n1,n2,n3,n4)%m ) ) cycle
                   nocr = nocm
                   nocr(n2, 2) = nocr(n2, 2) - 1
                   nocr(n4, 2) = nocr(n4, 2) + 1
                   pnMr = pnMm
-                  call bin_srch_nocc(nocr(:n_jorb(2), 2), &
-                       pr%pn(2)%nocc, pnMr(2))
+                  call bin_srch_nocc(nocr(:n_j_orbitals(2), 2), &
+                        pr%pn(2)%nocc, pnMr(2))
                   if (pnMr(2)==0) cycle
                   min_mp = max( pr%pn(1)%id(pnMr(1))%min_m, &
-                       pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m)
+                        pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m)
                   max_mp = min( pr%pn(1)%id(pnMr(1))%max_m, &
-                       pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m)
+                        pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m)
                   if (min_mp > max_mp) cycle
                   pnMr(3) = min_mp
                   call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
@@ -620,10 +623,10 @@ contains
                      idrs = idrs + 1
                      mr = pr%pid2rank(idr)
                      if ( abs(pnMl(3)-mm)/2 &
-                          > ubound(op%nocc2b(3,n1,n2,n3,n4)%m, 1) ) cycle
+                           > ubound(op%nocc2b(3,n1,n2,n3,n4)%m, 1) ) cycle
                      if (.not. allocated( &
-                          op%nocc2b(3,n1,n2,n3,n4)%m( &
-                          (pnMl(3)-mm)/2 )%v ) ) cycle
+                           op%nocc2b(3,n1,n2,n3,n4)%m( &
+                           (pnMl(3)-mm)/2 )%v ) ) cycle
                      if (mr < ms1 .or. ms2 < mr) cycle
                      mr = mr - ms1 + 1
                      n_idcnct(mr) = n_idcnct(mr) + 1
@@ -644,22 +647,22 @@ contains
                nocm(n1, ipn) = nocm(n1, ipn) - 1
                nocm(n2, ipn) = nocm(n2, ipn) - 1
                if (nocm(n2, ipn) < 0) cycle
-               do n3 = 1, n_jorb(ipn)
+               do n3 = 1, n_j_orbitals(ipn)
                   if (n3==n1 .or. n3==n2) cycle
-                  if (nocm(n3, ipn) == jorbn(n3, ipn)+1) cycle
-                  do n4 = n3, n_jorb(ipn)
+                  if (nocm(n3, ipn) == j_orbitalsn(n3, ipn)+1) cycle
+                  do n4 = n3, n_j_orbitals(ipn)
                      if (n4==n1 .or. n4==n2) cycle
                      if (.not. allocated( op%nocc2b(ipn,n1,n2,n3,n4)%m ) ) cycle
                      nocr = nocm
                      nocr(n3, ipn) = nocr(n3, ipn) + 1
                      nocr(n4, ipn) = nocr(n4, ipn) + 1
-                     if (nocr(n4, ipn) > jorbn(n4, ipn)+1) cycle
+                     if (nocr(n4, ipn) > j_orbitalsn(n4, ipn)+1) cycle
                      pnMr = pnMl
                      ! 
                      if (ipn == 1) pnMr(3) = pnMl(3) - op%mm*2
                      !
-                     call bin_srch_nocc(nocr(:n_jorb(ipn), ipn), &
-                          pr%pn(ipn)%nocc, pnMr(ipn))
+                     call bin_srch_nocc(nocr(:n_j_orbitals(ipn), ipn), &
+                           pr%pn(ipn)%nocc, pnMr(ipn))
                      if (pnMr(ipn)==0) cycle
                      call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
                      if (idrs==0) cycle
@@ -675,54 +678,54 @@ contains
             end do
          end do
       end do
-    end subroutine ptn_connect_twobody
+      end subroutine ptn_connect_twobody
 
 
 
-    subroutine ptn_connect_tb_beta(idl, n_idcnct, idcnct)
+      subroutine ptn_connect_tb_beta(idl, n_idcnct, idcnct)
       ! two-body beta decay operator
       ! cp+ cp+ cn cn 
       integer, intent(in) :: idl
       integer, intent(out) :: idcnct(:,:), n_idcnct(:)
       integer :: n1, n2, n3, n4, i, j, pnMl(3), pnMr(3), &
-           mi, mj, max_mp, min_mp, mm, mr, ipn, idr, idrs, &
-           nocl(max_n_jorb, 2), nocr(max_n_jorb, 2)
+            mi, mj, max_mp, min_mp, mm, mr, ipn, idr, idrs, &
+            nocl(max_n_j_orbitals, 2), nocr(max_n_j_orbitals, 2)
 
       n_idcnct(:) = 0
       nocl(:,:) = 0
       pnMl = pl%pidpnM_pid(:,idl)
       do ipn = 1, 2
-         nocl(:n_jorb(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
+         nocl(:n_j_orbitals(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
       end do
 
-      do n1 = 1, n_jorb(1)
-         do n2 = n1, n_jorb(1)
+      do n1 = 1, n_j_orbitals(1)
+         do n2 = n1, n_j_orbitals(1)
             nocr = nocl
             nocr(n1, 1) = nocr(n1, 1) - 1
             if (nocr(n1, 1) < 0) cycle
             nocr(n2, 1) = nocr(n2, 1) - 1
             if (nocr(n2, 1) < 0) cycle
-            call bin_srch_nocc( nocr(:n_jorb(1), 1), &
-                 pr%pn(1)%nocc, pnMr(1) )
+            call bin_srch_nocc( nocr(:n_j_orbitals(1), 1), &
+                  pr%pn(1)%nocc, pnMr(1) )
             if (pnMr(1)==0) cycle
             
-            do n3 = 1, n_jorb(2)
-               do n4 = n3, n_jorb(2)
+            do n3 = 1, n_j_orbitals(2)
+               do n4 = n3, n_j_orbitals(2)
 
                   if (.not. allocated(op%nocc2b(1,n1,n2,n3,n4)%m)) cycle
 
                   nocr(:, 2) = nocl(:, 2)
-                  if (nocr(n3, 2) == jorbn(n3, 2)+1) cycle
+                  if (nocr(n3, 2) == j_orbitalsn(n3, 2)+1) cycle
                   nocr(n3, 2) = nocr(n3, 2) + 1
-                  if (nocr(n4, 2) == jorbn(n4, 2)+1) cycle
+                  if (nocr(n4, 2) == j_orbitalsn(n4, 2)+1) cycle
                   nocr(n4, 2) = nocr(n4, 2) + 1
-                  call bin_srch_nocc(nocr(:n_jorb(2), 2), &
-                       pr%pn(2)%nocc, pnMr(2))
+                  call bin_srch_nocc(nocr(:n_j_orbitals(2), 2), &
+                        pr%pn(2)%nocc, pnMr(2))
                   if (pnMr(2)==0) cycle
                   min_mp = max( pr%pn(1)%id(pnMr(1))%min_m, &
-                       pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m)
+                        pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m)
                   max_mp = min( pr%pn(1)%id(pnMr(1))%max_m, &
-                       pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m)
+                        pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m)
                   if (min_mp > max_mp) cycle
                   pnMr(3) = min_mp
                   call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
@@ -731,10 +734,10 @@ contains
                      idr = pr%pid_srt2dpl(idrs)
                      idrs = idrs + 1
                      if ( abs(pnMl(3)-mm)/2 &
-                          > ubound(op%nocc2b(1,n1,n2,n3,n4)%m, 1) ) cycle
+                           > ubound(op%nocc2b(1,n1,n2,n3,n4)%m, 1) ) cycle
                      if (.not. allocated( &
-                          op%nocc2b(1,n1,n2,n3,n4)%m( &
-                          (pnMl(3)-mm)/2 )%v ) ) cycle
+                           op%nocc2b(1,n1,n2,n3,n4)%m( &
+                           (pnMl(3)-mm)/2 )%v ) ) cycle
                      mr = pr%pid2rank(idr)
                      if (mr < ms1 .or. ms2 < mr) cycle
                      mr = mr - ms1 + 1
@@ -748,24 +751,24 @@ contains
          end do
       end do
             
-    end subroutine ptn_connect_tb_beta
+      end subroutine ptn_connect_tb_beta
 
 
 
-    subroutine ptn_connect_ob_gt(idl, n_idcnct, idcnct)
+      subroutine ptn_connect_ob_gt(idl, n_idcnct, idcnct)
       ! Gamow-Teller type one-body operator
       integer, intent(in) :: idl
       integer, intent(out) :: idcnct(:,:), n_idcnct(:)
       integer :: n1, n4, i, j, pnMl(3), pnMm(3), pnMr(3), &
-           mi, mj, max_mp, min_mp, mm, mr, ipn, inp, idr, idrs, &
-           nocl(max_n_jorb, 2), nocm(max_n_jorb, 2), &
-           nocr(max_n_jorb, 2)
+            mi, mj, max_mp, min_mp, mm, mr, ipn, inp, idr, idrs, &
+            nocl(max_n_j_orbitals, 2), nocm(max_n_j_orbitals, 2), &
+            nocr(max_n_j_orbitals, 2)
 
       n_idcnct(:) = 0
       nocl(:,:) = 0
       pnMl = pl%pidpnM_pid(:,idl)
       do ipn = 1, 2
-         nocl(:n_jorb(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
+         nocl(:n_j_orbitals(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
       end do
 
       if (op%nbody == -10) then
@@ -778,27 +781,27 @@ contains
 
       inp = 3 - ipn
 
-      do n1 = 1, n_jorb(ipn)
+      do n1 = 1, n_j_orbitals(ipn)
          if (nocl(n1, ipn) == 0) cycle
          nocm = nocl
          nocm(n1, ipn) = nocm(n1, ipn) - 1
          pnMm = pnMl
-         call bin_srch_nocc(nocm(:n_jorb(ipn), ipn), &
-              pr%pn(ipn)%nocc, pnMm(ipn))
+         call bin_srch_nocc(nocm(:n_j_orbitals(ipn), ipn), &
+               pr%pn(ipn)%nocc, pnMm(ipn))
          if (pnMm(ipn)==0) cycle
-         do n4 = 1, n_jorb(inp)
-            if (nocm(n4, inp) == jorbn(n4, inp)+1) cycle
+         do n4 = 1, n_j_orbitals(inp)
+            if (nocm(n4, inp) == j_orbitalsn(n4, inp)+1) cycle
             ! if (.not. allocated( op%nocc1b(ipn,n1,n2)%m ) ) cycle
             nocr = nocm
             nocr(n4, inp) = nocr(n4, inp) + 1
             pnMr = pnMm
-            call bin_srch_nocc(nocr(:n_jorb(inp), inp), &
-                 pr%pn(inp)%nocc, pnMr(inp))
+            call bin_srch_nocc(nocr(:n_j_orbitals(inp), inp), &
+                  pr%pn(inp)%nocc, pnMr(inp))
             if (pnMr(inp)==0) cycle
             min_mp = max( pr%pn(1)%id(pnMr(1))%min_m, &
-                 pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m)
+                  pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m)
             max_mp = min( pr%pn(1)%id(pnMr(1))%max_m, &
-                 pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m)
+                  pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m)
             if (min_mp > max_mp) cycle
             pnMr(3) = min_mp
             call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
@@ -816,21 +819,21 @@ contains
          end do
       end do
 
-    end subroutine ptn_connect_ob_gt
+      end subroutine ptn_connect_ob_gt
 
 
-    subroutine ptn_connect_one_crt(idl, n_idcnct, idcnct)
+      subroutine ptn_connect_one_crt(idl, n_idcnct, idcnct)
       ! one-particle creation operator for s-factor
       integer, intent(in) :: idl
       integer, intent(out) :: idcnct(:,:), n_idcnct(:)
       integer :: n1, pnMl(3), pnMr(3), &
-           mr, ipn, npn, idr, idrs, nocl(max_n_jorb, 2)
+            mr, ipn, npn, idr, idrs, nocl(max_n_j_orbitals, 2)
 
       n_idcnct(:) = 0
       nocl(:,:) = 0
       pnMl = pl%pidpnM_pid(:,idl)
       do ipn = 1, 2
-         nocl(:n_jorb(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
+         nocl(:n_j_orbitals(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
       end do
 
       if (op%nbody == -1) then
@@ -847,8 +850,8 @@ contains
       pnMr = pnMl
       if (npn == 1) pnMr(3) = pr%mtotal - (pl%mtotal - pnMl(3))
       do ipn = 1, 2
-         call bin_srch_nocc(nocl(:n_jorb(ipn), ipn), &
-              pr%pn(ipn)%nocc, pnMr(ipn))
+         call bin_srch_nocc(nocl(:n_j_orbitals(ipn), ipn), &
+               pr%pn(ipn)%nocc, pnMr(ipn))
          if (pnMr(ipn)==0) return
       end do
       call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
@@ -861,24 +864,24 @@ contains
       n_idcnct(mr) = n_idcnct(mr) + 1
       if (n_idcnct(mr) > size(idcnct,1)) stop 'increase size of idcnct'
       idcnct(n_idcnct(mr), mr) = idr
-    end subroutine ptn_connect_one_crt
+      end subroutine ptn_connect_one_crt
 
 
 
 
-    subroutine ptn_connect_two_crt(idl, n_idcnct, idcnct)
+      subroutine ptn_connect_two_crt(idl, n_idcnct, idcnct)
       ! two-particle (pp or nn) creation operator for TNA
       integer, intent(in) :: idl
       integer, intent(out) :: idcnct(:,:), n_idcnct(:)
       integer :: n1, n2, pnMl(3), pnMr(3), &
-           mr, ipn, inp, idr, idrs, mp, &
-           nocl(max_n_jorb, 2), nocr(max_n_jorb, 2)
+            mr, ipn, inp, idr, idrs, mp, &
+            nocl(max_n_j_orbitals, 2), nocr(max_n_j_orbitals, 2)
 
       n_idcnct(:) = 0
       nocl(:,:) = 0
       pnMl = pl%pidpnM_pid(:,idl)
       do ipn = 1, 2
-         nocl(:n_jorb(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
+         nocl(:n_j_orbitals(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
       end do
 
       if     (op%nbody == -3) then
@@ -895,20 +898,20 @@ contains
 
       inp = 3 - ipn
       nocr(:,inp)  = nocl(:,inp)
-      call bin_srch_nocc( nocr(:n_jorb(inp), inp), &
-           pr%pn(inp)%nocc, pnMr(inp) )
+      call bin_srch_nocc( nocr(:n_j_orbitals(inp), inp), &
+            pr%pn(inp)%nocc, pnMr(inp) )
       if (pnMr(inp) == 0) return
 
-      do n1 = 1, n_jorb(ipn)
-         do n2 = 1, n_jorb(ipn)
+      do n1 = 1, n_j_orbitals(ipn)
+         do n2 = 1, n_j_orbitals(ipn)
             if (.not. allocated( op%nocc1b(ipn, n1, n2)%m )) cycle
             nocr(:,ipn) = nocl(:,ipn)
             nocr(n1, ipn) = nocr(n1, ipn) - 1
             if (nocr(n1, ipn) < 0) cycle
             nocr(n2, ipn) = nocr(n2, ipn) - 1
             if (nocr(n2, ipn) < 0) cycle
-            call bin_srch_nocc( nocr(:n_jorb(ipn), ipn), &
-                 pr%pn(ipn)%nocc, pnMr(ipn) )
+            call bin_srch_nocc( nocr(:n_j_orbitals(ipn), ipn), &
+                  pr%pn(ipn)%nocc, pnMr(ipn) )
             if (pnMr(ipn) == 0) cycle
 
             call bin_srch_nocc( pnMr, pr%pidpnM_pid_srt, idrs )
@@ -925,31 +928,31 @@ contains
          end do
       end do
 
-    end subroutine ptn_connect_two_crt
+      end subroutine ptn_connect_two_crt
 
-    
-    subroutine ptn_connect_pn_crt(idl, n_idcnct, idcnct)
+      
+      subroutine ptn_connect_pn_crt(idl, n_idcnct, idcnct)
       ! proton-neutron creation operator for TNA
       integer, intent(in) :: idl
       integer, intent(out) :: idcnct(:,:), n_idcnct(:)
       integer :: n1, n2, pnMl(3), pnMr(3), &
-           mr, ipn, inp, idr, idrs, md, &
-           nocl(max_n_jorb, 2), nocr(max_n_jorb, 2)
+            mr, ipn, inp, idr, idrs, md, &
+            nocl(max_n_j_orbitals, 2), nocr(max_n_j_orbitals, 2)
       integer :: min_mp, max_mp 
 
       n_idcnct(:) = 0
       nocl(:,:) = 0
       pnMl = pl%pidpnM_pid(:,idl)
       do ipn = 1, 2
-         nocl(:n_jorb(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
+         nocl(:n_j_orbitals(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
       end do
 
       if (op%nbody /= -5) stop "ERROR: input ptn_connect_pn_crt"
 
       md = (pl%mtotal - pr%mtotal) / 2 
 
-      do n1 = 1, n_jorb(1)
-         outer: do n2 = 1, n_jorb(2)
+      do n1 = 1, n_j_orbitals(1)
+         outer: do n2 = 1, n_j_orbitals(2)
             if (.not. allocated( op%nocc1b(3, n1, n2)%m )) cycle
             if (.not. allocated( op%nocc1b(3, n1, n2)%m(md)%v )) cycle
             nocr = nocl
@@ -959,15 +962,15 @@ contains
             if (nocr(n2, 2) < 0) cycle
 
             do ipn = 1, 2
-               call bin_srch_nocc(nocr(:n_jorb(ipn), ipn), &
-                    pr%pn(ipn)%nocc, pnMr(ipn))
+               call bin_srch_nocc(nocr(:n_j_orbitals(ipn), ipn), &
+                     pr%pn(ipn)%nocc, pnMr(ipn))
                if (pnMr(ipn)==0) cycle outer
             end do
 
             min_mp = max( pr%pn(1)%id(pnMr(1))%min_m, &
-                 pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m)
+                  pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m)
             max_mp = min( pr%pn(1)%id(pnMr(1))%max_m, &
-                 pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m)
+                  pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m)
             if (min_mp > max_mp) cycle
             pnMr(3) = min_mp
             call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
@@ -986,21 +989,21 @@ contains
          end do outer
       end do
 
-    end subroutine ptn_connect_pn_crt
+      end subroutine ptn_connect_pn_crt
 
 
-    subroutine ptn_connect_one_anh(idl, n_idcnct, idcnct)
+      subroutine ptn_connect_one_anh(idl, n_idcnct, idcnct)
       ! one-particle annihilation operator 
       integer, intent(in) :: idl
       integer, intent(out) :: idcnct(:,:), n_idcnct(:)
       integer :: n1, pnMl(3), pnMr(3), &
-           mr, ipn, npn, idr, idrs, nocl(max_n_jorb, 2)
+            mr, ipn, npn, idr, idrs, nocl(max_n_j_orbitals, 2)
 
       n_idcnct(:) = 0
       nocl(:,:) = 0
       pnMl = pl%pidpnM_pid(:,idl)
       do ipn = 1, 2
-         nocl(:n_jorb(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
+         nocl(:n_j_orbitals(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
       end do
 
       if (op%nbody == -6) then
@@ -1012,13 +1015,13 @@ contains
       end if
 
       n1 = op%crt_orb
-      if (nocl(n1, npn) == jorbn(n1,npn)+1) return
+      if (nocl(n1, npn) == j_orbitalsn(n1,npn)+1) return
       nocl(n1, npn) = nocl(n1, npn) + 1
       pnMr = pnMl
       if (npn == 1) pnMr(3) = pr%mtotal - (pl%mtotal - pnMl(3))
       do ipn = 1, 2
-         call bin_srch_nocc(nocl(:n_jorb(ipn), ipn), &
-              pr%pn(ipn)%nocc, pnMr(ipn))
+         call bin_srch_nocc(nocl(:n_j_orbitals(ipn), ipn), &
+               pr%pn(ipn)%nocc, pnMr(ipn))
          if (pnMr(ipn)==0) return
       end do
       call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
@@ -1031,9 +1034,9 @@ contains
       n_idcnct(mr) = n_idcnct(mr) + 1
       if (n_idcnct(mr) > size(idcnct,1)) stop 'increase size of idcnct'
       idcnct(n_idcnct(mr), mr) = idr
-    end subroutine ptn_connect_one_anh
+      end subroutine ptn_connect_one_anh
 
-  end subroutine init_bp_operator
+   end subroutine init_bp_operator
 
 
   subroutine finalize_bp_operator(self, op)
@@ -1253,245 +1256,245 @@ contains
 
 
 
-  subroutine bp_operate(self, vl, op, vr)
-    ! vl = op * vr
-    type(type_bridge_partitions), intent(inout) :: self
-    type(type_vec_p), intent(inout) :: vl
-    type(opr_m), intent(inout) :: op
-    type(type_vec_p), intent(inout) :: vr
-    integer :: idl, idr, i, ml, mr, myrank_right, nt, itask, nntask, ntask
-    integer :: npdim(4)
-    real(8) :: tmax, t
-    logical :: verb
-    integer(kdim) :: mq
-    integer :: iv_shift, jv_shift
-    
-    if (.not. allocated(op%mlmr)) stop "Error: call init_bp_operator"
+   subroutine bp_operate(self, vl, op, vr)
+      ! vl = op * vr
+      type(type_bridge_partitions), intent(inout) :: self
+      type(type_vec_p), intent(inout) :: vl
+      type(opr_m), intent(inout) :: op
+      type(type_vec_p), intent(inout) :: vr
+      integer :: idl, idr, i, ml, mr, myrank_right, nt, itask, nntask, ntask
+      integer :: npdim(4)
+      real(8) :: tmax, t
+      logical :: verb
+      integer(kdim) :: mq
+      integer :: iv_shift, jv_shift
+      
+      if (.not. allocated(op%mlmr)) stop "Error: call init_bp_operator"
 
-    verb = .false.
-    if ( op%nbody == 2 ) then 
-       if (op%is_j_square .and. verbose_jj==1 .and. verbose_h<2) verb = .true.
-       if ( .not. op%is_j_square .and. verbose_h==1 ) verb = .true.
-    end if
-       
-    if (verb) then
-       call reset_stopwatch(time_ope_cpu)
-       call reset_stopwatch(time_wait)
-       call reset_stopwatch(time_tmp)
-       call start_stopwatch(time_oper_tmp, is_reset=.true., is_mpi_barrier=.true.)
-    end if
+      verb = .false.
+      if ( op%nbody == 2 ) then 
+         if (op%is_j_square .and. verbose_jj==1 .and. verbose_h<2) verb = .true.
+         if ( .not. op%is_j_square .and. verbose_h==1 ) verb = .true.
+      end if
+         
+      if (verb) then
+         call reset_stopwatch(time_ope_cpu)
+         call reset_stopwatch(time_wait)
+         call reset_stopwatch(time_tmp)
+         call start_stopwatch(time_oper_tmp, is_reset=.true., is_mpi_barrier=.true.)
+      end if
 
-    !$omp parallel do 
-    do mq = 1, size(vl%p, kind=kdim)
-       vl%p(mq) = 0.0_kwf
-    end do
+      !$omp parallel do 
+      do mq = 1, size(vl%p, kind=kdim)
+         vl%p(mq) = 0.0_kwf
+      end do
 
-    if (verb) call start_stopwatch(time_tmpi_init, is_reset = .true., is_mpi_barrier=.true.)
-    call shift_mpi_init(vl, vr, verb)
-    if (verb) call stop_stopwatch(time_tmpi_init)
+      if (verb) call start_stopwatch(time_tmpi_init, is_reset = .true., is_mpi_barrier=.true.)
+      call shift_mpi_init(vl, vr, verb)
+      if (verb) call stop_stopwatch(time_tmpi_init)
 
-    call start_stopwatch(time_operate)
+      call start_stopwatch(time_operate)
 
-    do iv_shift = 0, nprocs_shift-1, nv_shift
-       jv_shift = min(iv_shift+nv_shift, nprocs_shift) - 1
+      do iv_shift = 0, nprocs_shift-1, nv_shift
+         jv_shift = min(iv_shift+nv_shift, nprocs_shift) - 1
 
 
-       if (op%nbody == 0) then
-          !$omp parallel private(ml, idl, mr, myrank_right, i, idr)
-          do ml = 0, nprocs_reduce-1
-             !$omp do schedule(dynamic)
-             do idl = self%idl_se(1,ml), self%idl_se(2,ml)
-                do mr = iv_shift, jv_shift
-                   myrank_right = modulo(myrank-mr, nprocs_shift)
-                   do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
-                      idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
-                      call wf_operate_zerobody(self%ptnl, self%ptnr, &
+         if (op%nbody == 0) then
+            !$omp parallel private(ml, idl, mr, myrank_right, i, idr)
+            do ml = 0, nprocs_reduce-1
+               !$omp do schedule(dynamic)
+               do idl = self%idl_se(1,ml), self%idl_se(2,ml)
+                  do mr = iv_shift, jv_shift
+                     myrank_right = modulo(myrank-mr, nprocs_shift)
+                     do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
+                        idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
+                        call wf_operate_zerobody(self%ptnl, self%ptnr, &
                            op, idl, idr, vec_reduce(ml)%p, &
                            vec_shift(mr-iv_shift)%p)
-                   end do
-                end do
-             end do
-             !$omp end do nowait
-          end do
-          !$omp end parallel
+                     end do
+                  end do
+               end do
+               !$omp end do nowait
+            end do
+            !$omp end parallel
 
-       elseif (op%nbody == 1) then
-          !$omp parallel private(ml, idl, mr, myrank_right, i, idr)
-          do ml = 0, nprocs_reduce-1
-             !$omp do schedule(dynamic)
-             do idl = self%idl_se(1,ml), self%idl_se(2,ml)
-                do mr = iv_shift, jv_shift
-                   myrank_right = modulo(myrank-mr, nprocs_shift)
-                   do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
-                      idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
-                      call wf_operate_onebody(self%ptnl, self%ptnr, &
+         elseif (op%nbody == 1) then
+            !$omp parallel private(ml, idl, mr, myrank_right, i, idr)
+            do ml = 0, nprocs_reduce-1
+               !$omp do schedule(dynamic)
+               do idl = self%idl_se(1,ml), self%idl_se(2,ml)
+                  do mr = iv_shift, jv_shift
+                     myrank_right = modulo(myrank-mr, nprocs_shift)
+                     do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
+                        idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
+                        call wf_operate_onebody(self%ptnl, self%ptnr, &
                            op, idl, idr, vec_reduce(ml)%p, &
                            vec_shift(mr-iv_shift)%p)
-                   end do
-                end do
-             end do
-             !$omp end do nowait
-          end do
-          !$omp end parallel
+                     end do
+                  end do
+               end do
+               !$omp end do nowait
+            end do
+            !$omp end parallel
 
-       elseif (op%nbody == 2) then ! two-body op.
+         elseif (op%nbody == 2) then ! two-body op.
 
-          if (verb) call start_stopwatch(time_tmp, is_reset=.true.)
-          tmax = 0.d0
-          nt = 1
-          !$ nt = omp_get_max_threads()
-          do i = 0, nt-1 
-             if (verb) call reset_stopwatch(time_nth(i))
-             if (verb) call reset_stopwatch(time_nth_ptn(i))
-          end do
+            if (verb) call start_stopwatch(time_tmp, is_reset=.true.)
+            tmax = 0.d0
+            nt = 1
+            !$ nt = omp_get_max_threads()
+            do i = 0, nt-1 
+               if (verb) call reset_stopwatch(time_nth(i))
+               if (verb) call reset_stopwatch(time_nth_ptn(i))
+            end do
 
-          nntask = 0
-          do ml = 0, nprocs_reduce - 1
-             if (nntask < self%ml(ml)%ntask) nntask = self%ml(ml)%ntask
-          end do
+            nntask = 0
+            do ml = 0, nprocs_reduce - 1
+               if (nntask < self%ml(ml)%ntask) nntask = self%ml(ml)%ntask
+            end do
 
-          ! if (verb) call init_time_ptn(self%idl_se(1,0), self%idl_se(2,nprocs_reduce-1))
-          if (verb .and. iv_shift==0) &
+            ! if (verb) call init_time_ptn(self%idl_se(1,0), self%idl_se(2,nprocs_reduce-1))
+            if (verb .and. iv_shift==0) &
                call init_time_ptn(0, nntask*nprocs_reduce-1)
 
-          nt = 0
-          !$omp parallel private(nt, ntask, ml, itask, idl, npdim, &
-          !$omp mr, myrank_right, i, idr)
-          !$ nt = omp_get_thread_num()
-          !$omp do schedule(dynamic) reduction(max: tmax)
-          do ntask = 0, nntask*nprocs_reduce-1
-             itask = ntask / nprocs_reduce + 1
-             ml = mod(ntask, nprocs_reduce)
-             if (itask > self%ml(ml)%ntask) cycle
-             if (verb) call start_stopwatch( time_nth_ptn(nt), is_reset=.true.)
-             if (verb) call start_stopwatch( time_nth(nt) )
-             idl = self%ml(ml)%idl_itask(itask)
-             if (verb) call start_time_ptn(ntask)
-             npdim = self%ml(ml)%dim_itask(:, itask)
-             do mr = iv_shift, jv_shift
-                myrank_right = modulo(myrank-mr, nprocs_shift)
-                do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
-                   idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
-                   call wf_operate_twobody( self%ptnl, self%ptnr, &
+            nt = 0
+            !$omp parallel private(nt, ntask, ml, itask, idl, npdim, &
+            !$omp mr, myrank_right, i, idr)
+            !$ nt = omp_get_thread_num()
+            !$omp do schedule(dynamic) reduction(max: tmax)
+            do ntask = 0, nntask*nprocs_reduce-1
+               itask = ntask / nprocs_reduce + 1
+               ml = mod(ntask, nprocs_reduce)
+               if (itask > self%ml(ml)%ntask) cycle
+               if (verb) call start_stopwatch( time_nth_ptn(nt), is_reset=.true.)
+               if (verb) call start_stopwatch( time_nth(nt) )
+               idl = self%ml(ml)%idl_itask(itask)
+               if (verb) call start_time_ptn(ntask)
+               npdim = self%ml(ml)%dim_itask(:, itask)
+               do mr = iv_shift, jv_shift
+                  myrank_right = modulo(myrank-mr, nprocs_shift)
+                  do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
+                     idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
+                     call wf_operate_twobody( self%ptnl, self%ptnr, &
                         op, idl, idr, vec_reduce(ml)%p, &
                         vec_shift(mr-iv_shift)%p, npdim)
-                end do
-             end do
-             if (verb) call stop_time_ptn(ntask)
-             if (verb) call stop_stopwatch(time_nth_ptn(nt))
-             if (verb .and. time_nth_ptn(nt)%time > tmax) &
+                  end do
+               end do
+               if (verb) call stop_time_ptn(ntask)
+               if (verb) call stop_stopwatch(time_nth_ptn(nt))
+               if (verb .and. time_nth_ptn(nt)%time > tmax) &
                   tmax = time_nth_ptn(nt)%time
-             if (verb) call stop_stopwatch( time_nth(nt) )
-          end do
-          !$omp end do 
-          !$omp end parallel
-          if (verb) call stop_stopwatch(time_tmp)
+               if (verb) call stop_stopwatch( time_nth(nt) )
+            end do
+            !$omp end do 
+            !$omp end parallel
+            if (verb) call stop_stopwatch(time_tmp)
 
-       elseif (op%nbody == -10 .or. op%nbody == -11) then
+         elseif (op%nbody == -10 .or. op%nbody == -11) then
 
-          !$omp parallel private(ml, idl, mr, myrank_right, i, idr)
-          do ml = 0, nprocs_reduce-1
-             !$omp do schedule(dynamic)
-             do idl = self%idl_se(1,ml), self%idl_se(2,ml)
-                do mr = iv_shift, jv_shift
-                   myrank_right = modulo(myrank-mr, nprocs_shift)
-                   do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
-                      idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
-                      call wf_operate_ob_gt(self%ptnl, self%ptnr, &
+            !$omp parallel private(ml, idl, mr, myrank_right, i, idr)
+            do ml = 0, nprocs_reduce-1
+               !$omp do schedule(dynamic)
+               do idl = self%idl_se(1,ml), self%idl_se(2,ml)
+                  do mr = iv_shift, jv_shift
+                     myrank_right = modulo(myrank-mr, nprocs_shift)
+                     do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
+                        idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
+                        call wf_operate_ob_gt(self%ptnl, self%ptnr, &
                            op, idl, idr, vec_reduce(ml)%p, &
                            vec_shift(mr-iv_shift)%p)
-                   end do
-                end do
-             end do
-             !$omp end do nowait
-          end do
-          !$omp end parallel
+                     end do
+                  end do
+               end do
+               !$omp end do nowait
+            end do
+            !$omp end parallel
 
 
-       elseif (op%nbody == -12 .or. op%nbody == -13) then
+         elseif (op%nbody == -12 .or. op%nbody == -13) then
 
-          !$omp parallel private(ml, idl, mr, myrank_right, i, idr)
-          do ml = 0, nprocs_reduce-1
-             !$omp do schedule(dynamic)
-             do idl = self%idl_se(1,ml), self%idl_se(2,ml)
-                do mr = iv_shift, jv_shift
-                   myrank_right = modulo(myrank-mr, nprocs_shift)
-                   do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
-                      idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
-                      call wf_operate_tb_beta(self%ptnl, self%ptnr, &
+            !$omp parallel private(ml, idl, mr, myrank_right, i, idr)
+            do ml = 0, nprocs_reduce-1
+               !$omp do schedule(dynamic)
+               do idl = self%idl_se(1,ml), self%idl_se(2,ml)
+                  do mr = iv_shift, jv_shift
+                     myrank_right = modulo(myrank-mr, nprocs_shift)
+                     do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
+                        idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
+                        call wf_operate_tb_beta(self%ptnl, self%ptnr, &
                            op, idl, idr, vec_reduce(ml)%p, &
                            vec_shift(mr-iv_shift)%p)
-                   end do
-                end do
-             end do
-             !$omp end do nowait
-          end do
-          !$omp end parallel
+                     end do
+                  end do
+               end do
+               !$omp end do nowait
+            end do
+            !$omp end parallel
 
-       elseif (op%nbody == -1 .or. op%nbody == -2) then
+         elseif (op%nbody == -1 .or. op%nbody == -2) then
 
-          !$omp parallel private(ml, idl, mr, myrank_right, i, idr)
-          do ml = 0, nprocs_reduce-1
-             !$omp do schedule(dynamic)
-             do idl = self%idl_se(1,ml), self%idl_se(2,ml)
-                do mr = iv_shift, jv_shift
-                   myrank_right = modulo(myrank-mr, nprocs_shift)
-                   do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
-                      idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
-                      call wf_operate_one_crt(self%ptnl, self%ptnr, &
+            !$omp parallel private(ml, idl, mr, myrank_right, i, idr)
+            do ml = 0, nprocs_reduce-1
+               !$omp do schedule(dynamic)
+               do idl = self%idl_se(1,ml), self%idl_se(2,ml)
+                  do mr = iv_shift, jv_shift
+                     myrank_right = modulo(myrank-mr, nprocs_shift)
+                     do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
+                        idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
+                        call wf_operate_one_crt(self%ptnl, self%ptnr, &
                            op, idl, idr, vec_reduce(ml)%p, &
                            vec_shift(mr-iv_shift)%p)
-                   end do
-                end do
-             end do
-             !$omp end do nowait
-          end do
-          !$omp end parallel
+                     end do
+                  end do
+               end do
+               !$omp end do nowait
+            end do
+            !$omp end parallel
 
 
-       elseif (op%nbody == -3 .or. op%nbody == -4 .or. op%nbody == -5) then 
+         elseif (op%nbody == -3 .or. op%nbody == -4 .or. op%nbody == -5) then 
 
-          !$omp parallel private(ml, idl, mr, myrank_right, i, idr)
-          do ml = 0, nprocs_reduce-1
-             !$omp do schedule(dynamic)
-             do idl = self%idl_se(1,ml), self%idl_se(2,ml)
-                do mr = iv_shift, jv_shift
-                   myrank_right = modulo(myrank-mr, nprocs_shift)
-                   do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
-                      idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
-                      call wf_operate_two_crt(self%ptnl, self%ptnr, &
+            !$omp parallel private(ml, idl, mr, myrank_right, i, idr)
+            do ml = 0, nprocs_reduce-1
+               !$omp do schedule(dynamic)
+               do idl = self%idl_se(1,ml), self%idl_se(2,ml)
+                  do mr = iv_shift, jv_shift
+                     myrank_right = modulo(myrank-mr, nprocs_shift)
+                     do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
+                        idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
+                        call wf_operate_two_crt(self%ptnl, self%ptnr, &
                            op, idl, idr, vec_reduce(ml)%p, &
                            vec_shift(mr-iv_shift)%p)
-                   end do
-                end do
-             end do
-             !$omp end do nowait
-          end do
-          !$omp end parallel
+                     end do
+                  end do
+               end do
+               !$omp end do nowait
+            end do
+            !$omp end parallel
 
-       end if
+         end if
 
-       call shift_mpi_middle(jv_shift, verb)
+         call shift_mpi_middle(jv_shift, verb)
 
-    end do  /* iv_shift */
+      end do  /* iv_shift */
 
-    call stop_stopwatch(time_operate)
+      call stop_stopwatch(time_operate)
 
-    if (verb) call start_stopwatch(time_tmpi_fin, is_reset=.true., is_mpi_barrier=.true.)
-    call shift_mpi_finalize()
-    if (verb) call stop_stopwatch(time_tmpi_fin)
+      if (verb) call start_stopwatch(time_tmpi_fin, is_reset=.true., is_mpi_barrier=.true.)
+      call shift_mpi_finalize()
+      if (verb) call stop_stopwatch(time_tmpi_fin)
 
-    if (op%is_j_square) then
-       verbose_jj = verbose_jj + 1
-    else
-       if (op%nbody == 2) verbose_h = verbose_h + 1
-    end if
+      if (op%is_j_square) then
+         verbose_jj = verbose_jj + 1
+      else
+         if (op%nbody == 2) verbose_h = verbose_h + 1
+      end if
 
-    if (.not. verb) return
+      if (.not. verb) return
 
-    call print_time_operate_report(op, tmax, verb)
+      call print_time_operate_report(op, tmax, verb)
 
-  end subroutine bp_operate
+   end subroutine bp_operate
 
 
 
@@ -1637,16 +1640,16 @@ contains
           call op_pnint( norb_ph_p(1), norb_ph_n(1), &
                norb_ph_p(3), norb_ph_n(3) )
        else if (ph_p==1 .and. ph_n==0) then
-          do n = 1, n_jorb(2)
+          do n = 1, n_j_orbitals(2)
              call op_pnint( norb_ph_p(1), n, norb_ph_p(3), n )
           end do
        else if (ph_p==0 .and. ph_n==1) then
-          do n = 1, n_jorb(1)
+          do n = 1, n_j_orbitals(1)
              call op_pnint( n, norb_ph_n(1), n, norb_ph_n(3) )
           end do
        else if (ph_p==0 .and. ph_n==0) then
-          do ni = 1, n_jorb(1)
-             do nj = 1, n_jorb(2)
+          do ni = 1, n_j_orbitals(1)
+             do nj = 1, n_j_orbitals(2)
                 call op_pnint( ni, nj, ni, nj )
              end do
           end do
@@ -1665,20 +1668,20 @@ contains
                norb_ph_p(3), norb_ph_n(3) )
        else if (ph_p==1 .and. ph_n==0) then
           ! one-body non-diag not implemented
-          do n = 1, n_jorb(1)
+          do n = 1, n_j_orbitals(1)
              call order_nn(n, norb_ph_p(1), n1, n2)
              call order_nn(n, norb_ph_p(3), n3, n4)
              call op_ppint( n1, n2, n3, n4 )
           end do
-          do n = 1, n_jorb(2)
+          do n = 1, n_j_orbitals(2)
              call op_pnint( norb_ph_p(1), n, norb_ph_p(3), n )
           end do
        else if (ph_p==0 .and. ph_n==1) then
           ! one-body non-diag not implemented
-          do n = 1, n_jorb(1)
+          do n = 1, n_j_orbitals(1)
              call op_pnint( n, norb_ph_n(1), n, norb_ph_n(3) )
           end do
-          do n = 1, n_jorb(2)
+          do n = 1, n_j_orbitals(2)
              call order_nn(n, norb_ph_n(1), n1, n2)
              call order_nn(n, norb_ph_n(3), n3, n4)
              call op_nnint( n1, n2, n3, n4 )
@@ -1704,18 +1707,18 @@ contains
                op, &
                vtl, vtr, npdim)
 
-          do ni = 1, n_jorb(1)
-             do nj = ni, n_jorb(1)
+          do ni = 1, n_j_orbitals(1)
+             do nj = ni, n_j_orbitals(1)
                 call op_ppint(ni, nj, ni, nj)
              end do
           end do
-          do ni = 1, n_jorb(2)
-             do nj = ni, n_jorb(2)
+          do ni = 1, n_j_orbitals(2)
+             do nj = ni, n_j_orbitals(2)
                 call op_nnint(ni, nj, ni, nj)
              end do
           end do
-          do ni = 1, n_jorb(1)
-             do nj = 1, n_jorb(2)
+          do ni = 1, n_j_orbitals(1)
+             do nj = 1, n_j_orbitals(2)
                 call op_pnint(ni, nj, ni, nj)
              end do
           end do
@@ -1729,12 +1732,12 @@ contains
     md = (ptnl%mtotal - ptnr%mtotal) / 2
 
     if ( ph_p==0 .and. ph_n==0 .and. mmln==mmrn) then
-       do n = 1, n_jorb(1)
+       do n = 1, n_j_orbitals(1)
           call op_p_ob( n, n )
        end do
     end if
     if (ph_p==0 .and. ph_n==0 .and. mmlp==mmrp) then
-       do n = 1, n_jorb(2)
+       do n = 1, n_j_orbitals(2)
           call op_n_ob( n, n )
        end do
     end if
@@ -1946,7 +1949,7 @@ contains
     integer, intent(in) :: nocl(:), nocr(:)
     integer, intent(out) :: nph, norb_ph(4)
     ! integer :: ndif(size(nocl)) ! slow declare in SPARC
-    integer :: ndif(max_n_jorb)
+    integer :: ndif(max_n_j_orbitals)
     integer :: i, j, k, iup, idn, n
     n = size(nocl)
     do i = 1, n
@@ -2027,12 +2030,12 @@ contains
          ptnr%pn(2)%nocc(:,idrn), ph_n, norb_ph_n )
 
    if ( ph_p==0 .and. ph_n==0 .and. mmln==mmrn) then
-       do n = 1, n_jorb(1)
+       do n = 1, n_j_orbitals(1)
           call op_p_ob( n, n )
        end do
     end if
     if (ph_p==0 .and. ph_n==0 .and. mmlp==mmrp) then
-       do n = 1, n_jorb(2)
+       do n = 1, n_j_orbitals(2)
           call op_n_ob( n, n )
        end do
     end if
@@ -2609,24 +2612,24 @@ contains
   
   !---------------------------------------------------------------------
 
-  subroutine ex_val(self, v, op, r, vr)
-    ! expectation value, <v| op |v> (option: <v|op|vr>
-    type(type_bridge_partitions), intent(inout) :: self
-    type(type_vec_p), intent(inout) :: v
-    type(type_vec_p), intent(inout), optional :: vr
-    type(opr_m), intent(inout) :: op
-    real(8), intent(out) :: r
-    type(type_vec_p) :: vt
+   subroutine expectation_value(self, v, op, r, vr)
+      ! expectation value, <v| op |v> (option: <v|op|vr>
+      type(type_bridge_partitions), intent(inout) :: self
+      type(type_vec_p), intent(inout) :: v
+      type(type_vec_p), intent(inout), optional :: vr
+      type(opr_m), intent(inout) :: op
+      real(8), intent(out) :: r
+      type(type_vec_p) :: vt
 
-    call wf_alloc_vec(vt, self%ptnl)
-    if (present(vr)) then
-       call bp_operate(self, vt, op, vr)
-    else
-       call bp_operate(self, vt, op, v)
-    end if
-    r = dot_product_global(vt, v)
-    call deallocate_l_vec(vt%p)
-  end subroutine ex_val
+      call wf_alloc_vec(vt, self%ptnl)
+      if (present(vr)) then
+         call bp_operate(self, vt, op, vr)
+      else
+         call bp_operate(self, vt, op, v)
+      end if
+      r = dot_product_global(vt, v)
+      call deallocate_l_vec(vt%p)
+   end subroutine expectation_value
 
 
   subroutine eig_residual(self, eig, v, op, r)

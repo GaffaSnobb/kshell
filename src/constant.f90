@@ -32,7 +32,7 @@ module constant
   character(maxchar), parameter :: c_no_init="NO_INIT"
   integer(kdim), parameter :: max_int4 = 2147483647
 
-  integer, parameter :: max_n_jorb=36
+  integer, parameter :: max_n_j_orbitals=36
 
   ! stderr
   integer, parameter :: lunerr = 0

@@ -26,170 +26,262 @@ module partition
      integer :: min_m, max_m, iprty ! 2*max of Jz, J &  parity
   end type type_ptn_id
 
-  type type_ptn  ! partition for proton (or neutron)
-     integer :: n_id   ! number of partition id's
-     type(type_ptn_id), allocatable :: id(:) 
-     !  nocc(korb, id)  number of occupation in orbits
-     integer, allocatable :: nocc(:,:)  
-     integer(kdim) :: n_mbit ! total number of M-scheme bits
-     integer :: n_targeted = 0
-  end type type_ptn
+   type type_ptn  ! partition for proton (or neutron)
+      ! Parameters
+      ! ----------
+      ! n_id:
+      !   The number of proton (or neutron) configurations.
+      !
+      ! nocc:
+      !   nocc is a 2D array. It has the shape of (n_id, n_j_orbitals).
+      !   nocc(i, j) is the number of protons (or neutrons) in the j-th
+      !   orbital of the i-th proton (or neutron) configuration.
+      integer :: n_id   ! number of partition ids
+      type(type_ptn_id), allocatable :: id(:) 
+      !  nocc(korb, id)  number of occupation in orbits
+      integer, allocatable :: nocc(:,:)  
+      integer(kdim) :: n_mbit ! total number of M-scheme bits
+      integer :: n_targeted = 0
+   end type type_ptn
 
 ! proton-neutron combined partitions
-  type type_ptn_pn ! self 
-     integer :: n_ferm(2), iprty, mtotal, max_jj
-     type(type_ptn), pointer :: pn(:) => null()  ! pn(2)
-     integer :: n_pidpnM
-     ! pidpnM_pid(:,id) = idp, idn, Mp*2 (deployed order)
-     integer, allocatable :: pidpnM_pid(:,:)     
-     ! sorted partion id for binary search
-     integer, allocatable :: pidpnM_pid_srt(:,:) 
-     ! index trans. of sorted to that of deployed, and reversed
-     integer, allocatable :: pid_srt2dpl(:) 
-     integer, allocatable :: pid_dpl2srt(:) ! index reversed trans.
-     integer(kdim) :: ndim, max_ndim_pid, max_ndim_pid_pn(2)
-     integer(kdim), allocatable :: ndim_pid(:), ndim_srt(:), ndim_srt_acc(:)
-     integer :: n_nocc
-     integer, allocatable :: srt2nocc(:) ! # partition ID => nocc ID in ptn file
-     ! for MPI
-     integer :: idl_start, idl_end ! , ntask
-     integer, allocatable :: rank2ntask(:), pid2rank(:)
-     integer(kdim) :: local_dim, max_local_dim
-     integer(kdim), allocatable :: local_dim_acc(:), local_dim_acc_start(:)
-  end type type_ptn_pn
+   type type_ptn_pn ! self
+      ! Parameters
+      ! ----------
+      ! n_ferm:
+      !   n_ferm(1) is the number of valence protons, n_ferm(2) is the
+      !   number of valence neutrons.
+      !
+      ! iprty:
+      !   The parity of the partition.
+      integer :: n_ferm(2), iprty, mtotal, max_jj
+      type(type_ptn), pointer :: pn(:) => null()  ! pn(2)
+      integer :: n_pidpnM
+      ! pidpnM_pid(:,id) = idp, idn, Mp*2 (deployed order)
+      integer, allocatable :: pidpnM_pid(:,:)     
+      ! sorted partion id for binary search
+      integer, allocatable :: pidpnM_pid_srt(:,:) 
+      ! index trans. of sorted to that of deployed, and reversed
+      integer, allocatable :: pid_srt2dpl(:) 
+      integer, allocatable :: pid_dpl2srt(:) ! index reversed trans.
+      integer(kdim) :: ndim, max_ndim_pid, max_ndim_pid_pn(2)
+      integer(kdim), allocatable :: ndim_pid(:), ndim_srt(:), ndim_srt_acc(:)
+      integer :: n_nocc
+      integer, allocatable :: srt2nocc(:) ! # partition ID => nocc ID in ptn file
+      ! for MPI
+      integer :: idl_start, idl_end ! , ntask
+      integer, allocatable :: rank2ntask(:), pid2rank(:)
+      integer(kdim) :: local_dim, max_local_dim
+      integer(kdim), allocatable :: local_dim_acc(:), local_dim_acc_start(:)
+   end type type_ptn_pn
 
 
-  ! type for mbit_orb
-  type type_m_mbit 
-     integer :: n 
-     integer(kmbit), allocatable :: mbit(:)
-     integer, allocatable :: mm(:)
-  end type type_m_mbit
+   ! type for mbit_orb
+   type type_m_mbit 
+      integer :: n 
+      integer(kmbit), allocatable :: mbit(:)
+      integer, allocatable :: mm(:)
+   end type type_m_mbit
   
 contains
 
-  subroutine init_partition(self, lun, mtot, verbose)
-    type(type_ptn_pn), intent(out) :: self ! partition information
-    integer, intent(in) :: lun, mtot
-    logical, optional, intent(in) :: verbose
-    integer :: ipn, i, j, k, n, mm, loop, mi, mj, mp, mn, mz, iprty
-    integer :: id1, id2, j1, j2
-    type(type_m_mbit), allocatable :: mbit_orb(:,:,:) 
-    integer(kmbit) :: mb
-    integer, allocatable :: pidpn_pid(:,:) ! idp,idn = pidpn_wo_M(:,id)
-    integer, allocatable :: max_j_s(:,:)
-    logical :: verb
+   subroutine init_partition(self, lun, mtot, verbose)
+      type(type_ptn_pn), intent(out) :: self ! partition information
+      integer, intent(in) :: lun, mtot
+      logical, optional, intent(in) :: verbose
+      integer :: ipn, i, j, k, n, mm, loop, mi, mj, mp, mn, mz, iprty
+      integer :: id1, id2, j1, j2
+      type(type_m_mbit), allocatable :: mbit_orb(:,:,:) 
+      integer(kmbit) :: mb
+      integer, allocatable :: pidpn_pid(:,:) ! idp,idn = pidpn_wo_M(:,id)
+      integer, allocatable :: max_j_s(:,:)
+      logical :: verb
+      write(*, *) "INSIDE init_partition"
 
-    verb = .true.
-    if (present(verbose)) verb = verbose
+      verb = .true.
+      if (present(verbose)) verb = verbose
 
-    if (associated(self%pn)) stop 'ERROR partition pn assocated'
-    allocate( self%pn(2) ) 
-    self%pn(1)%n_targeted = 1
+      if (associated(self%pn)) stop 'ERROR partition pn assocated'
+      allocate( self%pn(2) ) 
+      self%pn(1)%n_targeted = 1
 
-    call skip_comment(lun)
-    read(lun, *) self%n_ferm(1), self%n_ferm(2), self%iprty
+      call skip_comment(lun)
+      !  write(*, *) self%n_ferm(1), self%n_ferm(2), self%iprty
+      read(lun, *) self%n_ferm(1), self%n_ferm(2), self%iprty ! Read the number of valence protons, valence neutrons, and the parity.
+      !  write(*, *) self%n_ferm(1), self%n_ferm(2), self%iprty
 
-    ! read partition information of proton, neutron sectors
-    call skip_comment(lun)
-    read(lun, *) self%pn(1)%n_id, self%pn(2)%n_id
-    if (is_debug) write(*,*) "ptn%pn(1)%n_id, ptn%pn(2)%n_id", &
-         self%pn(1)%n_id, self%pn(2)%n_id
-    do ipn = 1, 2
-       allocate( self%pn(ipn)%id( self%pn(ipn)%n_id ), &
-            self%pn(ipn)%nocc( n_jorb(ipn), self%pn(ipn)%n_id ))
-       call skip_comment(lun)
-       do i = 1, self%pn(ipn)%n_id
-          read(lun, *) j, self%pn(ipn)%nocc(:, i)
-          if (i>2) then
-             if (compare_nocc( self%pn(ipn)%nocc(:,i-1), &
-                  self%pn(ipn)%nocc(:,i) ) /= 1) &
+      ! read partition information of proton, neutron sectors
+      call skip_comment(lun)
+      read(lun, *) self%pn(1)%n_id, self%pn(2)%n_id  ! Read the number of proton and neutron configurations.
+      !  write(*, *) self%pn(1)%n_id, self%pn(2)%n_id
+      if (is_debug) write(*,*) "ptn%pn(1)%n_id, ptn%pn(2)%n_id", self%pn(1)%n_id, self%pn(2)%n_id
+      do ipn = 1, 2
+         ! Loop over proton and neutron partitions.
+         allocate( self%pn(ipn)%id( self%pn(ipn)%n_id ), &  ! Allocate space for configuration indices.
+            self%pn(ipn)%nocc( n_j_orbitals(ipn), self%pn(ipn)%n_id ))  ! Allocate space for the configurations.
+         call skip_comment(lun)
+         do i = 1, self%pn(ipn)%n_id
+            ! Loop over the number of configurations.
+            read(lun, *) j, self%pn(ipn)%nocc(:, i)
+            if (i>2) then
+               if (compare_nocc( self%pn(ipn)%nocc(:,i-1), self%pn(ipn)%nocc(:,i) ) /= 1) then
                   stop "error order pp (or nn) partition"
-          end if
-          if (is_debug) write(*,*) "j, ptn(ipn)%nocc(:,i)", &
-               j, self%pn(ipn)%nocc(:,i)
-          if (i/=j) stop "error in partition file" 
-       end do
-    end do
-
-
-    ! read partition of p-n combination
-    call skip_comment(lun)
-    read(lun, *) n
-    allocate( pidpn_pid(2,n) )
-    do i = 1, n
-       read(lun, *) pidpn_pid(1,i), pidpn_pid(2,i)
-       if (i>2) then
-          if (compare_nocc(pidpn_pid(1:2,i-1),  pidpn_pid(1:2,i)) /= 1) &
+               end if
+               
+            end if
+            if (is_debug) write(*,*) "j, ptn(ipn)%nocc(:,i)", j, self%pn(ipn)%nocc(:,i)
+            if (i/=j) stop "error in partition file" 
+         end do
+      end do
+      
+      ! read partition of p-n combination
+      call skip_comment(lun)
+      read(lun, *) n ! The number of proton-neutron combinations.
+      allocate( pidpn_pid(2,n) )
+      do i = 1, n
+         ! Loop over the number of proton-neutron combinations.
+         read(lun, *) pidpn_pid(1,i), pidpn_pid(2,i)
+         if (i>2) then
+            if (compare_nocc(pidpn_pid(1:2,i-1),  pidpn_pid(1:2,i)) /= 1) &
                stop "error order p-n partition"
-       end if
-    end do
-    self%n_nocc = n
+         end if
+      end do
+      self%n_nocc = n   ! The number of proton-neutron combinations.
 
 
-    self%mtotal = mtot
-    if (maxval(n_morb) > bit_size(mb)-2) stop 'increase kmbit'
+      self%mtotal = mtot
+      if (maxval(n_morb) > bit_size(mb)-2) stop 'increase kmbit'
 
-    call start_stopwatch(time_tmp, is_reset=.true., is_mpi_barrier=.true.)
+      call start_stopwatch(time_tmp, is_reset=.true., is_mpi_barrier=.true.)
 
-    n = max(self%pn(1)%n_id, self%pn(2)%n_id)
-    allocate( max_j_s(n,2) )
+      n = max(self%pn(1)%n_id, self%pn(2)%n_id)   ! n is the max of the number of proton and neutron configurations.
+      allocate( max_j_s(n,2) )
 
-    do ipn = 1, 2
-       !$omp parallel do private (mm, iprty)
-       do i = 1, self%pn(ipn)%n_id
-          mm = max_m_nocc(self%pn(ipn)%nocc(:,i), ipn)
-          iprty = product( (/( &
-               iporbn(k,ipn)**self%pn(ipn)%nocc(k,i), &
-               k=1, n_jorb(ipn) )/) )
-          max_j_s(i, ipn) = mm
-          self%pn(ipn)%id(i)%iprty = iprty
-          self%pn(ipn)%id(i)%min_m =   max_j_s(i,ipn)
-          self%pn(ipn)%id(i)%max_m = - max_j_s(i,ipn)
-       end do
-    end do
+      do ipn = 1, 2
+         ! Loop over proton and neutron partitions.
+         ! What does this loop do? It calculated the largest possible
+         ! j value that all protons (neutrons) in each configuration
+         ! can have.
+         ! Has k not been initialized?
+         ! NB: There was a omp parallel do here.
+         ! write(*, *) "ipn", ipn
+         ! write(*, *) "self%pn(ipn)%n_id: ", self%pn(ipn)%n_id
+         do i = 1, self%pn(ipn)%n_id
+            ! Loop over the number of configurations.
+            mm = max_m_nocc(self%pn(ipn)%nocc(:,i), ipn)
+            ! write(*, *) "k: ", k
+            iprty = product( (/( parity_orbitalsn(k, ipn)**self%pn(ipn)%nocc(k, i), k=1, n_j_orbitals(ipn) )/) )
+            ! write(*, *) "iprty: ", iprty
+            ! write(*, *) "parity_orbitalsn(k, ipn): ", parity_orbitalsn(k, ipn)
+            ! write(*, *) "mm: ", mm
+            ! write(*, *) "iprty: ", iprty
+            ! write(*, *) "ipn: ", ipn
+            max_j_s(i, ipn) = mm
+            self%pn(ipn)%id(i)%iprty = iprty
+            self%pn(ipn)%id(i)%min_m =   max_j_s(i,ipn)
+            self%pn(ipn)%id(i)%max_m = - max_j_s(i,ipn)
+            ! write(*, *) "self%pn(ipn)%id(i)%min_m: ", self%pn(ipn)%id(i)%min_m
+            ! write(*, *) "self%pn(ipn)%id(i)%max_m: ", self%pn(ipn)%id(i)%max_m
+         end do
+      end do
+      ! write(*, *) "size(max_j_s): ", size(max_j_s)
+      ! write(*, *) "max_j_s: ", max_j_s
+      
+      k = 0
+      ! write(*, *) "self%n_nocc: ", self%n_nocc
+      do i = 1, self%n_nocc
+         ! Loop over the number of proton-neutron combinations.
+         ! If the final min_m value is always -max_m, why bother to
+         ! calculate min_m?
+         ! NOTE: Many of the min and max values are overwritten in the
+         ! next set of loops.
+         id1 = pidpn_pid(1,i) ! Index from col 1 row i.
+         id2 = pidpn_pid(2,i) ! Index from col 2 row i.
+         j1 = max_j_s( id1, 1 )  ! Largest possible j value for the protons in the configuration.
+         j2 = max_j_s( id2, 2 )  ! Largest possible j value for the neutrons in the configuration.
+         k = max( j1+j2, k )
+         
+         self%pn(1)%id(id1)%min_m = min( &
+         self%pn(1)%id(id1)%min_m, &
+         self%mtotal - j2 )
+         
+         self%pn(2)%id(id2)%min_m = min( &
+         self%pn(2)%id(id2)%min_m, &
+         self%mtotal - j1 )
+         
+         self%pn(1)%id(id1)%max_m = max( &
+         self%pn(1)%id(id1)%max_m, &
+         self%mtotal + j2 )
+         
+         self%pn(2)%id(id2)%max_m = max( &
+         self%pn(2)%id(id2)%max_m, &
+         self%mtotal + j1 )
+      end do
+      self%max_jj = k
+      if (myrank==0 .and. verb) write(*,'(a,i3)') 'Max 2*J = ', self%max_jj
+      
+      ! write(*, *) "BEFORE"
+      ! do id1 = 1, self%pn(1)%n_id
+      !    write(*, *) self%pn(1)%id(id1)%min_m, self%pn(1)%id(id1)%max_m
+      ! end do
+      ! write(*, *) "LOOLL"
+      ! do id2 = 1, self%pn(2)%n_id
+      !    write(*, *) self%pn(2)%id(id2)%min_m, self%pn(2)%id(id2)%max_m
+      ! end do
+      
+      do ipn = 1, 2
+         ! NB: There was an omp parallel here!
+         do i = 1, self%pn(ipn)%n_id
+            iprty = self%pn(ipn)%id(i)%iprty ! Not used...?
+            mi = max(-max_j_s(i,ipn), self%pn(ipn)%id(i)%min_m )
+            mj = min( max_j_s(i,ipn), self%pn(ipn)%id(i)%max_m )
+            allocate( self%pn(ipn)%id(i)%mz(mi:mj) )
+            self%pn(ipn)%id(i)%min_m = mi
+            self%pn(ipn)%id(i)%max_m = mj
+         end do
+      end do
+      
+      deallocate( max_j_s )
+      
+      call init_mbit_orb(self, mbit_orb)
+      ! allocate( mbit_orb(maxval(n_j_orbitals), 0:maxval(self%n_ferm) ,2) )
+      
+      write(*, *) "mbit_orb: "
+      do i = 1, maxval(n_j_orbitals)
+         do j = 0, maxval(self%n_ferm)
+            do k = 1, 2
+               write(*, *) mbit_orb(i, j, k)%n
+            end do
+         end do
+      end do
+      write(*, *) "ferm 0, proton:"
+      do i = 1, maxval(n_j_orbitals)
+         write(*, *) "orb: ", i
+         write(*, *) "n: ", mbit_orb(i, 0, 1)%n
+         write(*, *) "mbit: ", mbit_orb(i, 0, 1)%mbit
+         write(*, *) "mm: ", mbit_orb(i, 0, 1)%mm
+         write(*, *)
+      end do
+      write(*, *) "ferm 1, proton:"
+      do i = 1, maxval(n_j_orbitals)
+         write(*, *) "orb: ", i
+         write(*, *) "n: ", mbit_orb(i, 1, 1)%n
+         write(*, *) "mbit: ", mbit_orb(i, 1, 1)%mbit
+         write(*, *) "mm: ", mbit_orb(i, 1, 1)%mm
+         write(*, *)
+      end do
+      write(*, *) "ferm 2, proton:"
+      do i = 1, maxval(n_j_orbitals)
+         write(*, *) "orb: ", i
+         write(*, *) "n: ", mbit_orb(i, 2, 1)%n
+         write(*, *) "mbit: ", mbit_orb(i, 2, 1)%mbit
+         write(*, *) "mm: ", mbit_orb(i, 2, 1)%mm
+         write(*, *)
+      end do
+      stop
 
-    k = 0
-    do i = 1, self%n_nocc
-       id1 = pidpn_pid(1,i)
-       id2 = pidpn_pid(2,i)
-       j1 = max_j_s( id1, 1 )
-       j2 = max_j_s( id2, 2 )
-       k = max( j1+j2, k )
-       self%pn(1)%id(id1)%min_m = min( &
-            self%pn(1)%id(id1)%min_m, &
-            self%mtotal - j2 )
-       self%pn(2)%id(id2)%min_m = min( &
-            self%pn(2)%id(id2)%min_m, &
-            self%mtotal - j1 )
-       self%pn(1)%id(id1)%max_m = max( &
-            self%pn(1)%id(id1)%max_m, &
-            self%mtotal + j2 )
-       self%pn(2)%id(id2)%max_m = max( &
-            self%pn(2)%id(id2)%max_m, &
-            self%mtotal + j1 )
-    end do
-    self%max_jj = k
-    if (myrank==0 .and. verb) &
-         write(*,'(a,i3)') 'Max 2*J = ', self%max_jj
 
-    do ipn = 1, 2
-       !$omp parallel do private (i, iprty, mi, mj)
-       do i = 1, self%pn(ipn)%n_id
-          iprty = self%pn(ipn)%id(i)%iprty
-          mi = max(-max_j_s(i,ipn), self%pn(ipn)%id(i)%min_m )
-          mj = min( max_j_s(i,ipn), self%pn(ipn)%id(i)%max_m )
-          allocate( self%pn(ipn)%id(i)%mz(mi:mj) )
-          self%pn(ipn)%id(i)%min_m = mi
-          self%pn(ipn)%id(i)%max_m = mj
-       end do
-    end do
-
-    deallocate( max_j_s )
-
-    call init_mbit_orb(self, mbit_orb)
-
-    if (myrank==0) write(*,*)
+      if (myrank==0) write(*,*)
 
 
 #ifdef MPI
@@ -371,17 +463,17 @@ contains
       type(type_mbit), allocatable :: mbs(:)
       integer, parameter :: max_mmb=10000000
 
-      if (max_orb < n_jorb(ipn)) stop "increase max_orb"
+      if (max_orb < n_j_orbitals(ipn)) stop "increase max_orb"
 
       nz_occ = 0
-      do i = 1, n_jorb(ipn)
+      do i = 1, n_j_orbitals(ipn)
          if (nocc(i) == 0) cycle
          nz_occ = nz_occ +1
          k_nz_occ(nz_occ) = i
       end do
 
       nn = 1 
-      do k = 1, n_jorb(ipn)
+      do k = 1, n_j_orbitals(ipn)
          nn = nn * mbit_orb(k, nocc(k), ipn)%n
       end do
 
@@ -477,17 +569,17 @@ contains
       integer, parameter :: max_mmb=10000000
       integer(kmbit), allocatable :: mbt(:)
 
-      if (max_orb < n_jorb(ipn)) stop "increase max_orb"
+      if (max_orb < n_j_orbitals(ipn)) stop "increase max_orb"
 
       nz_occ = 0
-      do i = 1, n_jorb(ipn)
+      do i = 1, n_j_orbitals(ipn)
          if (nocc(i) == 0) cycle
          nz_occ = nz_occ +1
          k_nz_occ(nz_occ) = i
       end do
 
       nn = 1 
-      do k = 1, n_jorb(ipn)
+      do k = 1, n_j_orbitals(ipn)
          nn = nn * mbit_orb(k, nocc(k), ipn)%n
       end do
 
@@ -539,73 +631,165 @@ contains
 
 
 
-  subroutine init_mbit_orb( self, mbit_orb )
-    ! generate m-scheme bit for each orbit at "mbit_orb"
-    type(type_ptn_pn), intent(in) :: self ! partition information
-    type(type_m_mbit), allocatable, intent(inout) :: mbit_orb(:,:,:) 
-    integer :: loop, ipn, k, n, mm, j, i, mz
-    allocate( mbit_orb(maxval(n_jorb), 0:maxval(self%n_ferm) ,2) ) 
-    do loop = 1, 2
-       do ipn = 1, 2
-          do k = 1, maxval(n_jorb)
-             do n = 0, maxval(self%n_ferm)
-                mbit_orb(k,n,ipn)%n = 0
-             end do
-          end do
-          !$omp parallel do private (k, mm, n, i)
-          do k = 1, n_jorb(ipn) 
-             do mm = 0, 2**(jorbn(k,ipn)+1)-1
+   subroutine init_mbit_orb( self, mbit_orb )
+      ! generate m-scheme bit for each orbit at "mbit_orb"
+      type(type_ptn_pn), intent(in) :: self ! partition information
+      type(type_m_mbit), allocatable, intent(inout) :: mbit_orb(:,:,:) 
+      integer :: loop, ipn, k, n, mm, j, i, mz
+      allocate( mbit_orb(maxval(n_j_orbitals), 0:maxval(self%n_ferm) ,2) )
+      
+      write(*, *) "n_j_orbitals: ", n_j_orbitals
+      write(*, *)
+      ! do i = 1, maxval(n_j_orbitals)
+      !    do j = 0, maxval(self%n_ferm)
+      !       do k = 1, 2
+      !          write(*, *) mbit_orb(i, j, k)%n
+      !       end do
+      !    end do
+      ! end do
+      ! stop
+
+      do loop = 1, 2
+         do ipn = 1, 2
+            do k = 1, maxval(n_j_orbitals)
+               do n = 0, maxval(self%n_ferm)
+                  mbit_orb(k,n,ipn)%n = 0
+               end do
+            end do
+            !!$omp parallel do private (k, mm, n, i)
+            do k = 1, n_j_orbitals(ipn)
+               ! write(*, *) "NEXT ORBITAL"
+               ! write(*, *) "------------"
+               do mm = 0, 2**(j_orbitalsn(k,ipn)+1)-1
+                  ! Calculate the population count (popcnt) of mm. If
+                  ! the popcnt of mm is <= the number of valence protons
+                  ! (neutrons) then the current [orbital, popcnt, ipn]
+                  ! is counted (n += 1).
+                  ! write(*, *) "orbital: ", k
+                  ! write(*, *) "j_orbitalsn(k,ipn): ", j_orbitalsn(k,ipn)
+                  ! write(*, *) "mm: ", mm
 #ifndef NO_POPCNT
-                n = popcnt(mm)
+                  n = popcnt(mm) ! Count the number of bits which are set to 1.
 #else
-                n = 0
-                do i = 0, jorbn(k,ipn)
-                   if (btest(mm, i)) n = n + 1
-                end do
+                  n = 0
+                  do i = 0, j_orbitalsn(k,ipn)
+                     if (btest(mm, i)) n = n + 1
+                  end do
 #endif
-                if (n > self%n_ferm(ipn)) cycle
-                mbit_orb(k,n,ipn)%n = mbit_orb(k,n,ipn)%n + 1
-                if (loop==2) mbit_orb(k,n,ipn)%mbit(mbit_orb(k,n,ipn)%n) = mm
-             end do
-          end do
-       end do
-       if (loop==2) cycle
-       do ipn = 1, 2
-          do k = 1, n_jorb(ipn)
-             do n = 0, self%n_ferm(ipn)
-                allocate( mbit_orb(k,n,ipn)%mbit(mbit_orb(k,n,ipn)%n) )
-                allocate( mbit_orb(k,n,ipn)%mm(  mbit_orb(k,n,ipn)%n) )
-             end do
-          end do
-       end do
-    end do
+                  ! write(*, *) "n: ", n
+                  ! write(*, *)
+                  if (n > self%n_ferm(ipn)) cycle
+                  mbit_orb(k,n,ipn)%n = mbit_orb(k,n,ipn)%n + 1
+                  
+                  if (loop==2) then
+                     ! write(*, *) "orbital_idx: ", k
+                     ! write(*, *) "popcnt: ", n
+                     ! write(*, *) "mm: ", mm
+                     ! write(*, *) "n_tmp: ", mbit_orb(k, n, ipn)%n
+                     ! write(*, *) "ipn: ", ipn
+                     mbit_orb(k, n, ipn)%mbit(mbit_orb(k, n, ipn)%n) = mm
+                     ! stop
+                  end if
 
-    do ipn = 1, 2
-       i = 1 ! N.B.  skip 0-th bit
-       do k = 1, n_jorb(ipn)
-          do n = 0, self%n_ferm(ipn)
-             mbit_orb(k,n,ipn)%mbit(:) = ishft( mbit_orb(k,n,ipn)%mbit(:), i)
-          end do
-          i = i + jorbn(k, ipn) + 1
-       end do
-    end do
+               end do   ! end mm loop
+            end do   ! end k (orbital) loop
+         end do   ! end proton / neutron loop
+         if (loop==2) cycle
+         do ipn = 1, 2
+            do k = 1, n_j_orbitals(ipn)
+               do n = 0, self%n_ferm(ipn)
+                  ! if (mbit_orb(k,n,ipn)%n == 0) then
+                  !    write(*, *) "IS ZERO!!!"
+                  !    write(*, *) "orbital_idx: ", k
+                  !    write(*, *) "popcnt: ", n
+                  !    write(*, *) "ipn: ", ipn
+                  ! end if
 
-    do ipn = 1, 2
-       !$omp parallel do private(k, n, j, mz, i)
-       do k = 1, n_jorb(ipn)
-          do n = 0, self%n_ferm(ipn)
-             do j = 1, mbit_orb(k,n,ipn)%n
-                mz = 0
-                do i = 1, n_morb(ipn)
-                   if (btest(mbit_orb(k,n,ipn)%mbit(j), i)) &
+                  allocate( mbit_orb(k,n,ipn)%mbit(mbit_orb(k,n,ipn)%n) )
+                  allocate( mbit_orb(k,n,ipn)%mm(  mbit_orb(k,n,ipn)%n) )
+               end do
+            end do
+         end do
+      end do
+
+      do ipn = 1, 2
+         i = 1 ! N.B.  skip 0-th bit
+         do k = 1, n_j_orbitals(ipn)
+            do n = 0, self%n_ferm(ipn)
+               mbit_orb(k,n,ipn)%mbit(:) = ishft( mbit_orb(k,n,ipn)%mbit(:), i)
+            end do
+            i = i + j_orbitalsn(k, ipn) + 1
+         end do
+      end do
+
+      do ipn = 1, 2
+         do k = 1, n_j_orbitals(ipn)
+            do n = 0, self%n_ferm(ipn)
+               write(*, *) "n (loop): ", n
+               write(*, *) "mbit_orb(k,n,ipn)%n: ", mbit_orb(k,n,ipn)%n
+               do j = 1, mbit_orb(k,n,ipn)%n
+                  write(*, *) "n (probe): ", n
+                  mz = 0
+                  do i = 1, n_morb(ipn)
+                     if (btest(mbit_orb(k,n,ipn)%mbit(j), i)) then
+                        ! write(*, *) "i: ", i
+                        ! write(*, *) "ipn: ", ipn
+                        ! write(*, *) "morbn(i, ipn): ", morbn(i, ipn)
+                        ! write(*, *) morbn(i, ipn), " added"
                         mz = mz + morbn(i, ipn)
-                end do
-                mbit_orb(k,n,ipn)%mm(j) = mz
-             end do
-          end do
-       end do
-    end do
-  end subroutine init_mbit_orb
+                     end if
+                  end do
+                  mbit_orb(k,n,ipn)%mm(j) = mz
+                  if ((n == 6) .or. (n == 7)) then
+                     write(*, *) "n: ", n
+                     write(*, *) "self%n_ferm(ipn): ", self%n_ferm(ipn)
+                     write(*, *) "mbit_orb(k,n,ipn)%mm: ", mbit_orb(k, n, ipn)%mm
+                  end if
+                  ! write(*, *) "mz: ", mz
+               end do
+               ! write(*, *) "k: ", k
+               ! write(*, *) "n: ", n
+               ! write(*, *) "mbit_orb(k,n,ipn)%mm: ", mbit_orb(k,n,ipn)%mm
+               ! write(*, *)
+            end do
+            stop
+         end do
+      end do
+
+
+      ! write(*, *)
+      ! do i = 1, maxval(n_j_orbitals)
+      !    do j = 0, maxval(self%n_ferm)
+      !       ! write(*, *) "n: ", mbit_orb(i, j, 1)%n
+      !       ! write(*, *) "mm: ", mbit_orb(i, j, 1)%mm
+      !       write(*, *) "mbit: ", mbit_orb(i, j, 1)%mbit
+      !       ! do k = 1, 2
+      !       ! end do
+      !    end do
+      !    write(*, *) "20 her"
+      ! end do
+
+      ! write(*, *)
+      ! do i = 1, maxval(n_j_orbitals)
+      !    do j = 0, maxval(self%n_ferm)
+      !       do k = 1, 2
+      !          write(*, *) "LOL: ", mbit_orb(i, j, k)%n
+      !       end do
+      !    end do
+      ! end do
+      ! write(*, *)
+      ! do i = 1, maxval(n_j_orbitals)
+      !    do j = 0, maxval(self%n_ferm)
+      !       write(*, *) "orbital: ", i
+      !       write(*, *) "nucleon: ", j
+      !       write(*, *) "n: ", mbit_orb(i, j, 1)%n
+      !       write(*, *) "mm: ", mbit_orb(i, j, 1)%mm
+      !       write(*, *) "mbit: ", mbit_orb(i, j, 1)%mbit
+      !       write(*, *)
+      !    end do
+      ! end do
+      stop
+   end subroutine init_mbit_orb
 
   subroutine finalize_mbit_orb(self, mbit_orb)
     type(type_ptn_pn), intent(in) :: self 
@@ -613,7 +797,7 @@ contains
     integer :: ipn, k, n
 
     do ipn = 1, 2
-       do k = 1, n_jorb(ipn)
+       do k = 1, n_j_orbitals(ipn)
           do n = 0, self%n_ferm(ipn)
              deallocate( mbit_orb(k,n,ipn)%mbit )
              deallocate( mbit_orb(k,n,ipn)%mm )
@@ -969,37 +1153,48 @@ contains
   end subroutine deploy_srt_partition
 
   
-  function compare_nocc(nocc1, nocc2) result (r)
-    ! compare nocc1 < nocc2 in lexicographic order
-    !     r = 1  if nocc1 < nocc2
-    !         0  if nocc1 == nocc2
-    !        -1  if nocc1 > nocc2
-    integer, intent(in) :: nocc1(:), nocc2(:)
-    integer :: r
-    integer :: i
-    r = -1 
-    do i = 1, size(nocc1)
-       if (nocc1(i) == nocc2(i)) then
-          cycle
-       else if (nocc1(i) < nocc2(i)) then
-          r = 1
-       end if
-       return
-    end do
-    r = 0
-  end function compare_nocc
+   function compare_nocc(nocc1, nocc2) result (r)
+      ! compare nocc1 < nocc2 in lexicographic order
+      !     r = 1  if nocc1 < nocc2
+      !         0  if nocc1 == nocc2
+      !        -1  if nocc1 > nocc2
+      ! Can this function ever return -1?
+      integer, intent(in) :: nocc1(:), nocc2(:)
+      integer :: r
+      integer :: i
+      r = -1 
+      do i = 1, size(nocc1)
+         if (nocc1(i) == nocc2(i)) then
+            cycle
+         else if (nocc1(i) < nocc2(i)) then
+            r = 1
+         end if
+         return
+      end do
+      r = 0
+      stop
+   end function compare_nocc
 
 
-  function max_m_nocc(nocc, ipn) result (maxm)
-    ! doubled max M of partition of proton (or neutron)
-    integer,intent(in) :: nocc(:), ipn
-    integer :: maxm, i, j
-    maxm = 0
-    do i = 1, size(nocc)
-       j = jorbn(i, ipn)
-       maxm = maxm + (j-nocc(i)+1)*nocc(i)
-    end do
-  end function max_m_nocc
+   function max_m_nocc(nocc, ipn) result (maxm)
+      ! doubled max M of partition of proton (or neutron)
+      ! nocc is the ith proton or neutron configuration.
+      integer, intent(in) :: nocc(:), ipn
+      integer :: maxm, i, j
+      ! write(*, *) "j_orbitalsn: ", j_orbitalsn
+      ! write(*, *) "INSIDE max_m_nocc"
+      ! write(*, *) "size(nocc): ", size(nocc)
+      maxm = 0
+      do i = 1, size(nocc)
+         ! size(nocc) is the same as the number of orbitals.
+         j = j_orbitalsn(i, ipn)
+         ! write(*, *) "j_orbitalsn(i, ipn): ", j_orbitalsn(i, ipn)
+         ! write(*, *) "nocc(i): ", nocc(i)
+         maxm = maxm + (j - nocc(i) + 1)*nocc(i)
+         ! write(*, *) "maxm: ", maxm
+         ! write(*, *)
+      end do
+   end function max_m_nocc
 
 
   subroutine bin_srch_nocc(nocc, list, id)

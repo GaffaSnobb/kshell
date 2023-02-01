@@ -282,16 +282,16 @@
           call op_pnint( norb_ph_p(1), norb_ph_n(1), &
                norb_ph_p(3), norb_ph_n(3) )
        else if (ph_p==1 .and. ph_n==0) then
-          do n = 1, n_jorb(2)
+          do n = 1, n_j_orbitals(2)
              call op_pnint( norb_ph_p(1), n, norb_ph_p(3), n )
           end do
        else if (ph_p==0 .and. ph_n==1) then
-          do n = 1, n_jorb(1)
+          do n = 1, n_j_orbitals(1)
              call op_pnint( n, norb_ph_n(1), n, norb_ph_n(3) )
           end do
        else if (ph_p==0 .and. ph_n==0) then
-          do ni = 1, n_jorb(1)
-             do nj = 1, n_jorb(2)
+          do ni = 1, n_j_orbitals(1)
+             do nj = 1, n_j_orbitals(2)
                 call op_pnint( ni, nj, ni, nj )
              end do
           end do
@@ -310,20 +310,20 @@
                norb_ph_p(3), norb_ph_n(3) )
        else if (ph_p==1 .and. ph_n==0) then
           ! one-body non-diag not implemented
-          do n = 1, n_jorb(1)
+          do n = 1, n_j_orbitals(1)
              call order_nn(n, norb_ph_p(1), n1, n2)
              call order_nn(n, norb_ph_p(3), n3, n4)
              call op_ppint( n1, n2, n3, n4 )
           end do
-          do n = 1, n_jorb(2)
+          do n = 1, n_j_orbitals(2)
              call op_pnint( norb_ph_p(1), n, norb_ph_p(3), n )
           end do
        else if (ph_p==0 .and. ph_n==1) then
           ! one-body non-diag not implemented
-          do n = 1, n_jorb(1)
+          do n = 1, n_j_orbitals(1)
              call op_pnint( n, norb_ph_n(1), n, norb_ph_n(3) )
           end do
-          do n = 1, n_jorb(2)
+          do n = 1, n_j_orbitals(2)
              call order_nn(n, norb_ph_n(1), n1, n2)
              call order_nn(n, norb_ph_n(3), n3, n4)
              call op_nnint( n1, n2, n3, n4 )
@@ -338,18 +338,18 @@
                ptn%pn(2)%nocc(:, idln), &
                op%spe(1)%v, op%spe(2)%v, &
                vtl, vtr, npdim)
-          do ni = 1, n_jorb(1)
-             do nj = ni, n_jorb(1)
+          do ni = 1, n_j_orbitals(1)
+             do nj = ni, n_j_orbitals(1)
                 call op_ppint(ni, nj, ni, nj)
              end do
           end do
-          do ni = 1, n_jorb(2)
-             do nj = ni, n_jorb(2)
+          do ni = 1, n_j_orbitals(2)
+             do nj = ni, n_j_orbitals(2)
                 call op_nnint(ni, nj, ni, nj)
              end do
           end do
-          do ni = 1, n_jorb(1)
-             do nj = 1, n_jorb(2)
+          do ni = 1, n_j_orbitals(1)
+             do nj = 1, n_j_orbitals(2)
                 call op_pnint(ni, nj, ni, nj)
              end do
           end do
@@ -670,12 +670,12 @@
          ptnr%pn(2)%nocc(:,idrn), ph_n, norb_ph_n )
 
    if ( ph_p==0 .and. ph_n==0 .and. mmln==mmrn) then
-       do n = 1, n_jorb(1)
+       do n = 1, n_j_orbitals(1)
           call op_p_ob( n, n )
        end do
     end if
     if (ph_p==0 .and. ph_n==0 .and. mmlp==mmrp) then
-       do n = 1, n_jorb(2)
+       do n = 1, n_j_orbitals(2)
           call op_n_ob( n, n )
        end do
     end if

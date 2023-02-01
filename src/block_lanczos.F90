@@ -22,7 +22,7 @@ contains
 
   subroutine tr_block_lanczos(matv_blck, matv_blck_jj, &
        nrow_local, n_block, neig, eval, evec, maxiter, &
-       max_lanc_vec, n_res_vec, tol, is_load_snapshot, eval_jj )
+       max_lanc_vec, n_res_vec, lanc_convergence_tol, is_load_snapshot, eval_jj )
     !
     ! Thick-restart block lanczos method
     !  " n_block " in namelist
@@ -49,7 +49,7 @@ contains
     real(8), intent(inout), allocatable :: eval(:)
     real(kwf), intent(inout), allocatable :: evec(:,:)
     integer, intent(in), optional :: maxiter, max_lanc_vec, n_res_vec
-    real(8), intent(in), optional :: tol
+    real(8), intent(in), optional :: lanc_convergence_tol
     logical, intent(in), optional :: is_load_snapshot
     real(8), intent(in), optional :: eval_jj
     !
@@ -76,7 +76,7 @@ contains
     if (present(n_res_vec)) nres = n_res_vec
     nres = max(nres, neig)
     tl = 1.d-6
-    if (present(tol)) tl = tol
+    if (present(lanc_convergence_tol)) tl = lanc_convergence_tol
     is_load_s = .false.
     if (present(is_load_snapshot)) is_load_s = is_load_snapshot
     
@@ -356,14 +356,14 @@ contains
       real(8), intent(in) :: eval_jj
       integer, intent(in) :: nb
       real(8), intent(inout), optional :: bnout(:,:)
-      real(8) :: x, tol = 1.d-6
+      real(8) :: x, lanc_convergence_tol = 1.d-6
       real(8), allocatable :: tmat(:,:), tevec(:,:), teval(:), &
            an(:,:), bn(:,:), vv_orth(:,:)
       integer(kdim) :: nd
       integer :: n, iv, i
       integer :: itra1, itra2, itrb1, itrb2, itrc1, itrc2
 
-      if (kwf == 8) tol = 1.d-7
+      if (kwf == 8) lanc_convergence_tol = 1.d-7
       n = size(vec, 2) 
       
       allocate(tmat(n, n), tevec(n, n), teval(n), &
@@ -393,7 +393,7 @@ contains
               tevec(:itrb2,:itrb2), nb)
          call stop_stopwatch(time_diag)
 
-         if ( all( abs(teval(:nb)-eval_jj) < tol ) )  then 
+         if ( all( abs(teval(:nb)-eval_jj) < lanc_convergence_tol ) )  then 
             if (myrank==0) write(*,'(a, i5, 1000e10.2)') &
                  "  JJ converged", iv/nb+1, teval(:nb)-eval_jj
             exit
@@ -420,7 +420,7 @@ contains
          tmat( itrc1:itrc2, itrb1:itrb2 ) = bn
          tmat( itrb1:itrb2, itrc1:itrc2 ) = transpose(bn)
 
-         if (maxval( (/( bn(i,i), i=1, nb )/) ) < tol) then
+         if (maxval( (/( bn(i,i), i=1, nb )/) ) < lanc_convergence_tol) then
             if (myrank==0) write(*,'(a,100e10.2)') &
                  " *** JJ : bn too small *** ", (/( bn(i,i), i=1, nb )/)
             exit
@@ -432,7 +432,7 @@ contains
 
          if (present(bnout)) then
             x = maxval( (/( 1.d0-sum(tevec(:nb,i)**2), i=1, nb )/) )
-            if ( myrank==0 .and.  x > tol*10.d0 ) &
+            if ( myrank==0 .and.  x > lanc_convergence_tol*10.d0 ) &
                  write(*,'(a, e10.2)') 'WARNING: JJ block norm failure in jj_refine ', x
             bnout = matmul( transpose(tevec(:nb, :nb)), bnout )
          end if

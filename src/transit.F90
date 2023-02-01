@@ -10,8 +10,8 @@ program transit
 #endif
   use constant, only: kwf, kdim, kmbit, maxchar, c_no_init, pi
   use model_space, only: myrank, nprocs, read_sps, set_n_ferm, n_morb_pn, &
-       myrank, nprocs, ierr, n_jorb_pn, n_jorb, n_ferm, n_core, is_debug, &
-       jorb, lorb, korb, norb, itorb, iporb, is_mpi
+       myrank, nprocs, ierr, n_j_orbitals_pn, n_j_orbitals, n_ferm, n_core, is_debug, &
+       j_orbitals, l_orbitals, korb, n_orbitals, isospin_orbitals, parity_orbitals, is_mpi
   use model_space, only: m_mass=>mass, print_max_l_vec, &
        nprocs_reduce, nprocs_shift, nv_shift, is_mpi, allocate_l_vec, deallocate_l_vec
   use class_stopwatch
@@ -26,7 +26,7 @@ program transit
   use bridge_partitions, only: type_bridge_partitions, init_bridge_partitions, &
        finalize_bridge_partitions, &
        init_bp_operator, bp_operate, finalize_bp_operator, &
-       ex_val, init_mpi_shift_reduce
+       expectation_value, init_mpi_shift_reduce
   use bp_expc_val, only: bp_ex_vals_pn, bp_ex_vals_ij
   use bp_io, only: bp_load_wf
   use rotation_group, only: dcg
@@ -404,8 +404,8 @@ contains
     if (allocated(ops)) deallocate(ops, evs)
     if (allocated(evs_p_ij)) deallocate(evs_p_ij, evs_n_ij)
     allocate( ops(nop), evs(2, nop, n_eig_l, n_eig_r), &
-         evs_p_ij(n_jorb(1), n_jorb(1), nop, n_eig_l, n_eig_r ), &
-         evs_n_ij(n_jorb(2), n_jorb(2), nop, n_eig_l, n_eig_r ) )
+         evs_p_ij(n_j_orbitals(1), n_j_orbitals(1), nop, n_eig_l, n_eig_r ), &
+         evs_n_ij(n_j_orbitals(2), n_j_orbitals(2), nop, n_eig_l, n_eig_r ) )
 
     evs_p_ij = 0.d0
     evs_n_ij = 0.d0
@@ -595,8 +595,8 @@ contains
     nop = 1
     if (allocated(ops)) deallocate(ops, evs, evs_p_ij, evs_n_ij)
     allocate( ops(nop), evs(2, nop, n_eig_l, n_eig_r), &
-         evs_p_ij(n_jorb(1), n_jorb(1), nop, n_eig_l, n_eig_r ), &
-         evs_n_ij(n_jorb(2), n_jorb(2), nop, n_eig_l, n_eig_r ) )
+         evs_p_ij(n_j_orbitals(1), n_j_orbitals(1), nop, n_eig_l, n_eig_r ), &
+         evs_n_ij(n_j_orbitals(2), n_j_orbitals(2), nop, n_eig_l, n_eig_r ) )
     ops(nop)%p => r1y1
     evs_p_ij = 0.d0
     evs_n_ij = 0.d0
@@ -681,11 +681,11 @@ contains
 
     minrl = max_int4
     maxrl = -1
-    do il = 1, n_jorb(1)
-       jjl = jorb(il)
-       do ir = n_jorb(1)+1, n_jorb_pn
-          jjr = jorb(ir)
-          if ( iprty /= iporb(il)*iporb(ir) ) cycle
+    do il = 1, n_j_orbitals(1)
+       jjl = j_orbitals(il)
+       do ir = n_j_orbitals(1)+1, n_j_orbitals_pn
+          jjr = j_orbitals(ir)
+          if ( iprty /= parity_orbitals(il)*parity_orbitals(ir) ) cycle
           minrl = min( abs(jjl - jjr)/2, minrl )
           maxrl = max(    (jjl + jjr)/2, maxrl )
        end do
@@ -735,12 +735,12 @@ contains
     if ( ptnl%n_ferm(1) - ptnr%n_ferm(1) == -1)  nbody = -11
 
     iprty = ptnl%iprty * ptnr%iprty
-    if ( iprty /= iporb(iorbl)*iporb(iorbr) ) &
+    if ( iprty /= parity_orbitals(iorbl)*parity_orbitals(iorbr) ) &
          stop "parity mismatch in calc_gttype_olp"
     
 
-    jjl = jorb(iorbl)
-    jjr = jorb(iorbr)
+    jjl = j_orbitals(iorbl)
+    jjr = j_orbitals(iorbr)
     minrl = abs(jjl - jjr)/2
     maxrl = (jjl + jjr)/2
 
@@ -836,8 +836,8 @@ contains
           i1 = ij_orb(1,i)
           i2 = ij_orb(2,i)
           rm(i) = func_1( &
-               norb(i1), lorb(i1), jorb(i1), itorb(i1), &
-               norb(i2), lorb(i2), jorb(i2), itorb(i2) )
+               n_orbitals(i1), l_orbitals(i1), j_orbitals(i1), isospin_orbitals(i1), &
+               n_orbitals(i2), l_orbitals(i2), j_orbitals(i2), isospin_orbitals(i2) )
        end do
 
        ctmp1 =  fn_load_wave_l(:len_trim(fn_load_wave_l)-4)
@@ -856,9 +856,9 @@ contains
        open(lun_rme, file=fn_rme)
        write(lun_rme,*) '#  --- orbit numbers ---'
        write(lun_rme,*) '#   idx      n,   l,  2j,  2tz'
-       do i = 1, n_jorb_pn
+       do i = 1, n_j_orbitals_pn
           write(lun_rme,'(a,i5,a,4i5)') ' # ', i, '  ', &
-               norb(i), lorb(i), jorb(i), itorb(i)
+               n_orbitals(i), l_orbitals(i), j_orbitals(i), isospin_orbitals(i)
        end do
        write(lun_rme, '(/,a,i3,a,i3)') &
             ' # rank ', irank, ' parity ', iprty
@@ -880,7 +880,7 @@ contains
                   ')     J2=', jjr, '/2(', ir, ')'
              x = 0.d0
              do i = 1, n
-                ipn = (itorb(ij_orb(1,i)) + 3)/2
+                ipn = (isospin_orbitals(ij_orb(1,i)) + 3)/2
                 x(ipn) = x(ipn) + evvs(i,il,ir) * rm(i)
              end do
              if (present(e_charge)) then
@@ -942,7 +942,7 @@ contains
              if (jr >= mtotr+2) is_mup(i, j) = .true.
              cycle
           end if
-          call ex_val(bp, evec_l(i), op, evv(i,j), evec_r(j))
+          call expectation_value(bp, evec_l(i), op, evv(i,j), evec_r(j))
           evv(i,j) = evv(i,j) * sqrt(dble(jl+1)) / x
        end do
     end do
@@ -1030,7 +1030,7 @@ contains
                   'WARNING: J+^2|> required, skip ',i,jl,j,jr
              cycle
           end if
-          call ex_val(bp, evec_l(i), op, evv(i,j), evec_m(j))
+          call expectation_value(bp, evec_l(i), op, evv(i,j), evec_m(j))
           evv(i,j) = evv(i,j) * sqrt(dble(jl+1)) / x
        end do
     end do
@@ -1092,11 +1092,11 @@ contains
        write(*,*)
     end if
     
-    do k = 1, n_jorb_pn
-       if (ipn == 1 .and. k > n_jorb(1)) cycle
-       if (ipn == 2 .and. k <= n_jorb(1)) cycle
-       if (abs(mm) > jorb(k)) cycle
-       if (iporb(k) /= iprty) cycle
+    do k = 1, n_j_orbitals_pn
+       if (ipn == 1 .and. k > n_j_orbitals(1)) cycle
+       if (ipn == 2 .and. k <= n_j_orbitals(1)) cycle
+       if (abs(mm) > j_orbitals(k)) cycle
+       if (parity_orbitals(k) /= iprty) cycle
 
        no = 0
        do i = 1, n_eig_l
@@ -1104,8 +1104,8 @@ contains
           if (jl < 0) cycle
           do j = 1, n_eig_r
              jr = evec_r(j)%jj
-             if (jr < 0 .or. abs(jl - jr) > jorb(k)) cycle
-             x = dcg(jr, mtotr, jorb(k), mtotl-mtotr, jl, mtotl)
+             if (jr < 0 .or. abs(jl - jr) > j_orbitals(k)) cycle
+             x = dcg(jr, mtotr, j_orbitals(k), mtotl-mtotr, jl, mtotl)
              if (abs(x) < 1.d-8) cycle 
              no = no + 1
           end do
@@ -1113,12 +1113,12 @@ contains
        if (no==0) cycle
 
 
-       if (ipn == 2) n = k - n_jorb(1)
-       call char_orbit(norb(k), lorb(k), jorb(k), itorb(k), corb)
+       if (ipn == 2) n = k - n_j_orbitals(1)
+       call char_orbit(n_orbitals(k), l_orbitals(k), j_orbitals(k), isospin_orbitals(k), corb)
        if (myrank==0) then
           write(*,'(/,/,a,/)') '         n  l 2j 2tz'
           write(*,'(1a, 4i3, 2a)') "orbit : ", &
-               norb(k), lorb(k), jorb(k), itorb(k), '    ', corb
+               n_orbitals(k), l_orbitals(k), j_orbitals(k), isospin_orbitals(k), '    ', corb
           write(*,*)
        end if
        call opr_m_one_crt(crt, k, mm)
@@ -1135,11 +1135,11 @@ contains
           if (jl < 0) cycle
           do j = 1, n_eig_r
              jr = evec_r(j)%jj
-             if (jr < 0 .or. abs(jl - jr) > jorb(k)) cycle
-             x = dcg(jr, mtotr, jorb(k), mtotl-mtotr, jl, mtotl)
+             if (jr < 0 .or. abs(jl - jr) > j_orbitals(k)) cycle
+             x = dcg(jr, mtotr, j_orbitals(k), mtotl-mtotr, jl, mtotl)
              if (abs(x) < 1.d-8) cycle
 
-             call ex_val(bp, evec_l(i), crt, evv(i,j), evec_r(j))
+             call expectation_value(bp, evec_l(i), crt, evv(i,j), evec_r(j))
              evv(i,j) = (evv(i,j) * sqrt(dble(jl+1)) / x)**2  / dble(jl+1)
 
              if (myrank==0) write(*, '(2(i2,"(",i4,")",f9.3), f8.3, 2f10.4)') &
@@ -1185,13 +1185,13 @@ contains
 
     select case (ipn)
     case (1) 
-       kk = (/           1, n_jorb(1),             1, n_jorb(1) /)
+       kk = (/           1, n_j_orbitals(1),             1, n_j_orbitals(1) /)
        if (myrank==0) write(*,*) trim(fn_load_wave_l)," = ",trim(fn_load_wave_r)," + 2p "
     case (2) 
-       kk = (/ n_jorb(1)+1, n_jorb_pn,   n_jorb(1)+1, n_jorb_pn /) 
+       kk = (/ n_j_orbitals(1)+1, n_j_orbitals_pn,   n_j_orbitals(1)+1, n_j_orbitals_pn /) 
        if (myrank==0) write(*,*) trim(fn_load_wave_l)," = ",trim(fn_load_wave_r)," + 2n "
     case (3)
-       kk = (/           1, n_jorb(1),   n_jorb(1)+1, n_jorb_pn /) 
+       kk = (/           1, n_j_orbitals(1),   n_j_orbitals(1)+1, n_j_orbitals_pn /) 
        if (myrank==0) write(*,*) trim(fn_load_wave_l)," = ",trim(fn_load_wave_r)," + pn "
     case default
        stop "ERROR in calc_tna"
@@ -1204,11 +1204,11 @@ contains
     end if
 
     do k1 = kk(1), kk(2)
-       j1 = jorb(k1)
+       j1 = j_orbitals(k1)
        do k2 = kk(3), kk(4)
           if (k1 > k2) cycle
-          j2 = jorb(k2)
-          if ( iporb(k1) * iporb(k2) /= iprty ) cycle
+          j2 = j_orbitals(k2)
+          if ( parity_orbitals(k1) * parity_orbitals(k2) /= iprty ) cycle
 
           do irank = abs(j1-j2)/2, (j1+j2)/2
              if (abs(mm) > irank*2) cycle
@@ -1227,8 +1227,8 @@ contains
              end do
              if (no == 0) cycle
 
-             call char_orbit(norb(k1), lorb(k1), jorb(k1), itorb(k1), corb1)
-             call char_orbit(norb(k2), lorb(k2), jorb(k2), itorb(k2), corb2)
+             call char_orbit(n_orbitals(k1), l_orbitals(k1), j_orbitals(k1), isospin_orbitals(k1), corb1)
+             call char_orbit(n_orbitals(k2), l_orbitals(k2), j_orbitals(k2), isospin_orbitals(k2), corb2)
              if (myrank==0) then
                 write(*,'(/,a,i3,x,2a,i3,x,2a,i3,a)') &
                      'TNA : [ ', k1, corb1, ' x ', k2, corb2, ' ]^(', irank, ')'
@@ -1249,7 +1249,7 @@ contains
                    
                    if (abs(x) < 1.d-8) cycle
 
-                   call ex_val(bp, evec_l(i), op, evv(i,j), evec_r(j)) 
+                   call expectation_value(bp, evec_l(i), op, evv(i,j), evec_r(j)) 
                    evv(i,j) = evv(i,j) / x
 
                    if (myrank==0) write(*, &
@@ -1407,16 +1407,16 @@ contains
     ! OBTD index
     allocate( k12jj(  3, max_k12jj  ) )
     ii = 0
-    do jj  = abs(op%mm), maxval(jorb)*2
+    do jj  = abs(op%mm), maxval(j_orbitals)*2
        do ipn = 1, 2
-          if (ipn==1) kst(:) = (/ 1,           n_jorb(1), &
-               &                  1,           n_jorb(1) /)
-          if (ipn==2) kst(:) = (/ n_jorb(1)+1, n_jorb_pn, &
-               &                  n_jorb(1)+1, n_jorb_pn /)
+          if (ipn==1) kst(:) = (/ 1,           n_j_orbitals(1), &
+               &                  1,           n_j_orbitals(1) /)
+          if (ipn==2) kst(:) = (/ n_j_orbitals(1)+1, n_j_orbitals_pn, &
+               &                  n_j_orbitals(1)+1, n_j_orbitals_pn /)
           do k1 = kst(1), kst(2)
              do k2 = kst(3), kst(4)
-                if (iporb(k1)*iporb(k2) /= iprty) cycle
-                if (2*jj > jorb(k1)+jorb(k2)) cycle
+                if (parity_orbitals(k1)*parity_orbitals(k2) /= iprty) cycle
+                if (2*jj > j_orbitals(k1)+j_orbitals(k2)) cycle
                 ii = ii + 1
                 if (ii > max_k12jj) stop 'increase max_k12jj'
                 k12jj(:, ii) = (/ k1, k2, jj /)
@@ -1430,30 +1430,30 @@ contains
     ! TBTD index
     allocate( k1234jj(7, max_k1234jj) )
     ii = 0
-    do jj  = abs(op%mm), maxval(jorb)*2
+    do jj  = abs(op%mm), maxval(j_orbitals)*2
        do ipn = 1, 3
           
-          if (ipn==1) kst(:) = (/ 1,           n_jorb(1), &
-               &                  1,           n_jorb(1) /)
-          if (ipn==2) kst(:) = (/ n_jorb(1)+1, n_jorb_pn, &
-               &                  n_jorb(1)+1, n_jorb_pn /)
-          if (ipn==3) kst(:) = (/ 1,           n_jorb(1), &
-               &                  n_jorb(1)+1, n_jorb_pn /)
+          if (ipn==1) kst(:) = (/ 1,           n_j_orbitals(1), &
+               &                  1,           n_j_orbitals(1) /)
+          if (ipn==2) kst(:) = (/ n_j_orbitals(1)+1, n_j_orbitals_pn, &
+               &                  n_j_orbitals(1)+1, n_j_orbitals_pn /)
+          if (ipn==3) kst(:) = (/ 1,           n_j_orbitals(1), &
+               &                  n_j_orbitals(1)+1, n_j_orbitals_pn /)
 
           do k1 = kst(1), kst(2)
              do k2 = kst(3), kst(4)
                 if (k1 > k2) cycle
-                do j12 = abs(jorb(k1) - jorb(k2))/2, (jorb(k1) + jorb(k2))/2
+                do j12 = abs(j_orbitals(k1) - j_orbitals(k2))/2, (j_orbitals(k1) + j_orbitals(k2))/2
                    if (k1==k2 .and. mod(j12,2)==1) cycle
 
                    do k3 = kst(1), kst(2)
                       do k4 = kst(3), kst(4)
                          if (k3 > k4) cycle
-                         if (iporb(k1)*iporb(k2)*iporb(k3)*iporb(k4) &
+                         if (parity_orbitals(k1)*parity_orbitals(k2)*parity_orbitals(k3)*parity_orbitals(k4) &
                               /= iprty) cycle
                          
-                         do j34 = abs(jorb(k3)-jorb(k4))/2, &
-                              (jorb(k3)+jorb(k4))/2
+                         do j34 = abs(j_orbitals(k3)-j_orbitals(k4))/2, &
+                              (j_orbitals(k3)+j_orbitals(k4))/2
                             if (k3==k4 .and. mod(j34,2)==1) cycle
                             if ( jj < abs(j12-j34) ) cycle
                             if ( jj > j12+j34 ) cycle
@@ -1596,7 +1596,7 @@ contains
 
     if (myrank/=0) return
     
-    nj = maxval(n_jorb)
+    nj = maxval(n_j_orbitals)
 
     write(*,*) "OBTD m-scheme m.e."
     do n2 = 1, nj

@@ -14,6 +14,27 @@
 !
 ! You should have received a copy of the GNU General Public License along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+! CHEAT SHEET
+! implicit none: Force explicit typing
+! target: A variable must be declared target if it is going to be pointed to
+! nullify (pa): Disassociate the pointer pa from its target.
+! if associated(pa) then: Check if pa is pointing to a target.
+! mpi_init_thread(required, provided, ierr): Initializes the MPI execution environment, has a provision to request a certain level of thread support in required
+! present(arg): Check if the optional argument arg is given.
+! integer, save :: a: The value of the integer 'a' is retained between multiple function calls (static in C).
+! pure: The pure keyword indicates that the procedure has no side effects, e.g. does not alter gloabl variables, or prints messages (for optimization by the compiler).
+! getarg(i, name): Just like sys.argv in Python (get the i'th cml arg).
+! parameter: Like const in C.
+! type: Like structs in C.
+! pa => a: pa points to a.
+! res%a: Access the attribute 'a' of res.
+! dble(a): Converts 'a' to double precision real type.
+! intent(in): looks like pass by value (and changes of this are not reflected in outside code) but is in fact pass by reference and changing it is prohibited by the compiler. But it can be changed still.
+! intent(out): pass somehow by reference, in fact a return argument
+! intent(inout): pass by reference, normal in/out parameter.
+
+! VARIABLES
+! j_orbitals: integer array containing 2*j of each of the orbitals in the model space (for protons and neutrons).
 
 module kshell_func
     ! module to use subroutine as dummy object
@@ -22,7 +43,7 @@ module kshell_func
     use bridge_partitions, only: type_bridge_partitions, bp_operate
     use bp_block, only:  bp_operate_block
     use wavefunction, only: dot_product_global, type_vec_p
-    implicit none
+    implicit none   ! Force explicit typing
     private
     public :: set_kshell_func, matvec, dotprod, matvec_jj, &
         matvec_block, matvec_block_jj
@@ -34,7 +55,7 @@ module kshell_func
         subroutine set_kshell_func(wf, hamltn, j_square)
             type(type_bridge_partitions), target :: wf
             type(opr_m), target :: hamltn, j_square
-            wf_save => wf
+            wf_save => wf   ! wf_save points to wf
             hamltn_save => hamltn
             j_square_save => j_square
         end subroutine set_kshell_func
@@ -81,12 +102,12 @@ program kshell
 #ifdef MPI
     use mpi
 #endif
-    use constant, only: pi, kwf, kdim, kmbit, maxchar, c_no_init, max_int4, max_n_jorb
+    use constant, only: pi, kwf, kdim, kmbit, maxchar, c_no_init, max_int4, max_n_j_orbitals
     use model_space, only: myrank, nprocs, read_sps, set_n_ferm, n_morb_pn, &
-        myrank, nprocs, is_mpi, ierr, n_jorb_pn, n_jorb, sum_rule, &
+        myrank, nprocs, is_mpi, ierr, n_j_orbitals_pn, n_j_orbitals, sum_rule, &
         nprocs_reduce, nprocs_shift, n_ferm, n_core, is_debug
     use model_space, only: m_mass=>mass, allocate_l_vec, deallocate_l_vec, &
-        print_max_l_vec, nv_shift, corb, jorb
+        print_max_l_vec, nv_shift, corb, j_orbitals
     use class_stopwatch
     use interaction, only: read_interaction, hamltn, ham_cm, j_square, t_square, &
         r2y2, jtensor, ltensor, stensor, r1y1, set_gt, gt_m, set_ob_ij, r3y3
@@ -101,7 +122,7 @@ program kshell
     use bridge_partitions, only: type_bridge_partitions, &
         init_bridge_partitions, finalize_bridge_partitions, &
         init_bp_operator, finalize_bp_operator, bp_operate, &
-        ex_val, eig_residual, init_mpi_shift_reduce
+        expectation_value, eig_residual, init_mpi_shift_reduce
     use bp_expc_val, only: bp_ex_vals_pn 
     use bp_io, only: bp_save_wf, bp_load_wf
     use lanczos, only: lanczos_main, max_lanc_vec_doublej, set_lanczos_tmp_fn
@@ -114,18 +135,18 @@ program kshell
     implicit none
     type(type_ptn_pn), target :: ptn, ptn_init, ptn_srt ! partition information
     type(type_bridge_partitions) :: wf
-    integer, parameter :: lunnml=10, lunint=11, lunptn=12, lunwv=13
-    character(len=maxchar) :: fn_int, fn_nml, fn_ptn, fn_ptn_init, &
-        fn_save_wave, fn_load_wave, op_type_init, ctmp, fn_three_body_mp
+    integer, parameter :: lunnml=10, lun_interaction=11, lunptn=12, lunwv=13 ! Unit numbers for reading files (just a numbering of files to open).
+    character(len=maxchar) :: interaction_filename, namelist_filename, partition_filename, fn_ptn_init, &
+        save_wave_filename, load_wave_filename, op_type_init, ctmp, fn_three_body_mp
     character :: cp = '?'
     integer :: mtot, hw_type, n_eigen, &
         n_restart_vec, max_lanc_vec, maxiter, Jguess, mtot_init, n_eig_init, &
         mass, mode_lv_hdd, neig_load_wave, tt_proj
-    real(8) :: beta_cm, eff_charge(2), gl(2), gs(2), e1_charge(2), tol, add_randinit=0.d0
+    real(8) :: beta_cm, effective_charge(2), gl(2), gs(2), e1_charge(2), lanc_convergence_tol, add_randinit=0.d0
     logical :: is_double_j, is_load_snapshot, is_calc_tbme
     !
     type(type_vec_p), allocatable :: evec(:)
-    real(kwf), allocatable :: bl_evec(:,:)
+    real(kwf), allocatable :: block_evec(:,:)
     real(8), allocatable :: eval(:), cost(:), occ(:), evs(:,:)
     real(8), allocatable :: estimations(:)
     type(opr_m) :: op_init_wf, op_init_s
@@ -137,87 +158,91 @@ program kshell
     real(8) :: ss_e_range(2) = ss_e_range_init, skip_ld = 0.d0
     integer :: n_block = -1, nn, comm=0
     integer(kdim) :: mq
-    logical :: is_bl_lan = .false., is_lanczos = .true.
-    integer :: orbs_ratio(max_n_jorb)
+    logical :: is_block_lanczos = .false., is_lanczos = .true.
+    integer :: orbs_ratio(max_n_j_orbitals)
     type(type_vec_p) :: vone
     !
-    namelist /input/ fn_int, fn_ptn, fn_ptn_init, &
+    namelist /input/ interaction_filename, partition_filename, fn_ptn_init, &
         mtot, hw_type, n_eigen, &
         n_restart_vec, max_lanc_vec, maxiter, is_double_j, &
-        fn_save_wave, fn_load_wave, is_load_snapshot, &
-        beta_cm, eff_charge, gl, gs, e1_charge, op_type_init, mass, &
-        mode_lv_hdd, is_calc_tbme, tol, neig_load_wave, &
+        save_wave_filename, load_wave_filename, is_load_snapshot, &
+        beta_cm, effective_charge, gl, gs, e1_charge, op_type_init, mass, &
+        mode_lv_hdd, is_calc_tbme, lanc_convergence_tol, neig_load_wave, &
         ss_e_range, n_block, &
         nv_shift, nprocs_reduce, tt_proj, add_randinit, orbs_ratio
     
-    ! maxiter=0, neig_load_wave=-1, No fn_save_wave for just read 
+    ! maxiter=0, neig_load_wave=-1, No save_wave_filename for just read 
 
     call start_stopwatch(time_total, is_reset=.true.)
     call start_stopwatch(time_preproc, is_reset=.true.)
 
 #ifdef MPI
     is_mpi = .true.
-    #if defined (_OPENMP) && defined(SPARC) 
+    #if defined (_OPENMP) && defined(SPARC)
+        ! Initialise MPI and request a certain level of thread support.
         required = mpi_thread_serialized
-        call mpi_init_thread(required, provided, ierr)
+        call mpi_init_thread(required, provided, ierr)  ! Initializes the MPI execution environment
         if (provided < required) write(*,*) "***** warning in mpi_init_thread *****"
     #else
+        ! Initialise MPI.
         call mpi_init(ierr)
     #endif 
-    call mpi_comm_size(mpi_comm_world, nprocs, ierr)
-    call mpi_comm_rank(mpi_comm_world, myrank, ierr)
+    call mpi_comm_size(mpi_comm_world, nprocs, ierr)    ! Get the number of procs.
+    call mpi_comm_rank(mpi_comm_world, myrank, ierr)    ! Get current rank.
     ! write(*,'(1a,1i5,1a,1i5 )') "nprocs",nprocs,"    myrank", myrank
     if (myrank == 0) write(*,'(1a,1i5,1a,1i5 )') "nprocs",nprocs,"    myrank", myrank
     if (myrank /= 0) is_debug = .false.
 #endif
     !$ if (myrank==0) write(*,'(1a,1i3,/)') "OpenMP  # of threads=", omp_get_max_threads()
 
-    call set_seed()
+    call set_seed() ! Set seeds stored in iseed array.
     ! call set_seed(is_clock=.true.)
     call set_rank_seed(myrank)
 
     ! default parameters -------------
-    mass = 0                        ! mass number, optional
-    mtot = 0                        ! Jz * 2
-    n_eigen = 1                     ! # of eigenvalues to be otained
-    n_restart_vec = 10              ! # of Lanczos vectors for thick-restart Lanczos
-    max_lanc_vec = 100              ! max. # of vectors for thick-restart Lanczos
-    maxiter = 300                   ! max. # of iteration for thick-restart Lanczos
-    hw_type = 1                     ! harmonic oscillator formula
-    is_double_j = .false.           ! double Lanczos for J-projection
-    is_load_snapshot = .false.      ! snapshot restart at Thick-restart dump files
-    fn_save_wave = c_no_init        ! file name of save wave functions 
-    fn_ptn_init  = c_no_init        ! partion file for loading w.f. (def. fn_ptn)
-    fn_load_wave = c_no_init        ! file name of load wave functions 
-    neig_load_wave = 1              ! n-th wave function at "fn_load_wave" for initial (-1 : all states)
-    beta_cm = 0.d0                  ! Lawson parameter beta_cm (= beta*hw/A like OXBASH)
-    eff_charge = (/ 1.d0, 0.d0 /)   ! effective charges for E2, Q-moment
-    e1_charge  = (/ 0.d0, 0.d0 /)   ! effective charges for E1 
-    gl = (/1.d0, 0.d0/)             ! gyromagnetic ratios for orbital angular momentum
-    gs = (/5.586d0, -3.826d0/)      ! gyromagnetic ratios for spin
-    op_type_init = c_no_init        ! operate init w.f. E2, E1, M1, GT for strength function
-    tol = 1.d-6                     ! convergence condition for Lanczos method
-    ! if (kwf==8) tol = 1.d-7
-    mode_lv_hdd = 0                 ! see lanczos_main for the description
-    is_calc_tbme = .false.          ! ex. value of each TBME 
-    nprocs_reduce = 1               ! # of process for MPI reduction
-    nv_shift = 0                    ! # of vectors for shift 
-    tt_proj = -1                    ! isospin projection for LSF 2*T
-    orbs_ratio(:) = 0               ! orbit number for showing ratio of w.f.
+    mass = 0                              ! mass number, optional
+    mtot = 0                              ! Jz * 2
+    n_eigen = 1                           ! # of eigenvalues to be otained
+    n_restart_vec = 10                    ! # of Lanczos vectors for thick-restart Lanczos
+    max_lanc_vec = 100                    ! max. # of vectors for thick-restart Lanczos
+    maxiter = 300                         ! max. # of iteration for thick-restart Lanczos
+    hw_type = 1                           ! harmonic oscillator formula
+    is_double_j = .false.                 ! double Lanczos for J-projection
+    is_load_snapshot = .false.            ! snapshot restart at Thick-restart dump files
+    save_wave_filename = c_no_init        ! file name of save wave functions 
+    fn_ptn_init  = c_no_init              ! partion file for loading w.f. (def. partition_filename)
+    load_wave_filename = c_no_init        ! file name of load wave functions 
+    neig_load_wave = 1                    ! n-th wave function at "load_wave_filename" for initial (-1 : all states)
+    beta_cm = 0.d0                        ! Lawson parameter beta_cm (= beta*hw/A like OXBASH)
+    effective_charge = (/ 1.d0, 0.d0 /)   ! effective charges for E2, Q-moment
+    e1_charge  = (/ 0.d0, 0.d0 /)         ! effective charges for E1 
+    gl = (/1.d0, 0.d0/)                   ! gyromagnetic ratios for orbital angular momentum
+    gs = (/5.586d0, -3.826d0/)            ! gyromagnetic ratios for spin
+    op_type_init = c_no_init              ! operate init w.f. E2, E1, M1, GT for strength function
+    lanc_convergence_tol = 1.d-6          ! convergence condition for Lanczos method
+    ! if (kwf==8) lanc_convergence_tol = 1.d-7
+    mode_lv_hdd = 0                       ! see lanczos_main for the description
+    is_calc_tbme = .false.                ! ex. value of each TBME 
+    nprocs_reduce = 1                     ! # of process for MPI reduction
+    nv_shift = 0                          ! # of vectors for shift 
+    tt_proj = -1                          ! isospin projection for LSF 2*T
+    orbs_ratio(:) = 0                     ! orbit number for showing ratio of w.f.
     ! -----------------------------------
 
-    call getarg(1, fn_nml)
+    call getarg(1, namelist_filename)  ! Just like sys.argv in Python
 #ifdef MPI
-    call mpi_bcast(fn_nml, maxchar, mpi_character, 0, mpi_comm_world, ierr)
+    call mpi_bcast(namelist_filename, maxchar, mpi_character, 0, mpi_comm_world, ierr)
 #endif
-    open(lunnml, file=fn_nml, status='old')
+    ! Read data from the input namelist.
+    open(lunnml, file=namelist_filename, status='old')
     read(lunnml, nml=input)  
     close(lunnml)
 #ifdef MPI
     call init_mpi_shift_reduce()
     comm = mpi_comm_world
 #endif
-
+    
+    ! Adjust some namelist parameters, if necessary, and write them to file.
     if (n_eigen > n_restart_vec) n_restart_vec = n_eigen
     if (n_eigen >= max_lanc_vec) max_lanc_vec = n_eigen + 1 
     if (n_block > 0) mode_lv_hdd = 0
@@ -225,13 +250,14 @@ program kshell
     if (myrank == 0) write(*, nml=input)
     if (myrank == 0) write(*, '(a,3i3)') &
         "compile conf. kwf, kdim, kmbit =", kwf, kdim, kmbit
+    
+    ! Read interaction and partition files.
+    open(lun_interaction, file=interaction_filename, status='old')
+    call read_sps(lun_interaction)  ! In model_space.f90
 
-    open(lunint, file=fn_int, status='old')
-    call read_sps(lunint)
-
-    open(lunptn, file=fn_ptn, status='old')
+    open(lunptn, file=partition_filename, status='old')
     if (myrank == 0) write(*, '(1a,1i3,2a)') "set partition Mtotal=", mtot, &
-        "  partition_file= ", trim(fn_ptn)
+        "  partition_file= ", trim(partition_filename)
     call init_partition(ptn, lunptn, mtot)
     close(lunptn)
 
@@ -239,12 +265,13 @@ program kshell
     if (ptn%iprty == -1) cp = '-'
     if (myrank == 0) write(*, '(a,i3,2a,/)') &
         'M = ', ptn%mtotal, '/2  :  parity = ', cp
-
-
+    
+    ! NOTE: In the Ne20 USDA test runs, mass = 0 at this point.
     call set_n_ferm(ptn%n_ferm(1), ptn%n_ferm(2), mass)
-    call read_interaction(lunint, hw_type=hw_type)
-    close(lunint)
-
+    call read_interaction(lun_interaction, hw_type=hw_type)
+    close(lun_interaction)
+    
+    ! Adjust some more parameters.
     if (e1_charge(1) == 0.d0 .and. e1_charge(2) == 0.d0) then
         e1_charge(1) =  dble(n_ferm(2) + n_core(2)) / dble(m_mass)
         e1_charge(2) = -dble(n_ferm(1) + n_core(1)) / dble(m_mass)
@@ -260,6 +287,8 @@ program kshell
     call deploy_partition(ptn, cost, verbose=.true.)
     deallocate(cost)
 
+    ! Try to figure out what eval and evec are used for.
+    ! eval is a real array, evec is a type_vec_p array
     n = n_eigen
     if (n_block > 0) n = n_block
     allocate( eval(n), evec(n))
@@ -299,7 +328,7 @@ program kshell
     if (n_block > 0) then
         ! Use block Lanczos.
         is_lanczos = .false.
-        is_bl_lan = .true.
+        is_block_lanczos = .true.
         if (myrank == 0) write(*,*) " Block Lanczos method "
 
         if ( ptn%local_dim > max_int4 ) then
@@ -307,13 +336,15 @@ program kshell
             goto 999
         end if
 
-        allocate( bl_evec( ptn%local_dim, n_block ) )
+        allocate( block_evec( ptn%local_dim, n_block ) )
     end if
 
   ! sorted partition for load and save
-    if ((.not. is_load_snapshot) .and. fn_load_wave /= c_no_init) then
+    if ((.not. is_load_snapshot) .and. load_wave_filename /= c_no_init) then
+        ! If wave functions already exist?
+        ! Note that load_wave_filename defaults to c_no_init.
         ! read header of wave functions
-        open(lunwv, file=fn_load_wave, form='unformatted', &
+        open(lunwv, file=load_wave_filename, form='unformatted', &
             status='old', access='stream')
         read(lunwv) n_eig_init
         read(lunwv) mtot_init
@@ -337,9 +368,9 @@ program kshell
             if (myrank == 0) then 
                 write(*,'(/,a,i3,a)') "initial vec = T(E2)|M=", &
                         mtot_init, "/2>"
-                write(*,'(1a,2f9.5,/)') "effective charge", eff_charge
+                write(*,'(1a,2f9.5,/)') "effective charge", effective_charge
             end if
-            call opr_m_eff_charge(op_init_wf, r2y2, eff_charge)
+            call opr_m_eff_charge(op_init_wf, r2y2, effective_charge)
 
         else if (op_type_init == "M1" .or. op_type_init == "m1") then
 
@@ -374,10 +405,10 @@ program kshell
             if (myrank == 0) write(*,'(/,a,i3)') 'neig_load_wave = ', neig_load_wave 
 
             call set_ob_ij(i, j, irank, op_init_wf)
-            call bp_load_wf(fn_load_wave, evec, ptn, fn_ptn, mtot, &
+            call bp_load_wf(load_wave_filename, evec, ptn, partition_filename, mtot, &
                 fn_ptn_init, mtot_init, op_init_wf, op_type_init, &
                 neig_load_wave, tt_proj)
-            call bp_save_wf(fn_save_wave, evec(:n_eigen), ptn)
+            call bp_save_wf(save_wave_filename, evec(:n_eigen), ptn)
 
 #ifdef MPI
             call mpi_finalize(ierr)
@@ -391,17 +422,17 @@ program kshell
             !
             read(op_type_init( 4:5 ), *) i
             if (myrank == 0) write(*,'(/,a,i3,a,i3,a,i3,a,i3,a)') &
-                'initial vec = c+_',i,'  ( j =',jorb(i),'/2) )|M=', &
+                'initial vec = c+_',i,'  ( j =',j_orbitals(i),'/2) )|M=', &
                 mtot_init,'/2>'
             if (myrank == 0) write(*,'(/,a,i3)') 'neig_load_wave = ', neig_load_wave 
 
             call opr_m_one_crt(op_init_wf, i, mtot - mtot_init)
-            call bp_load_wf(fn_load_wave, evec, ptn, fn_ptn, mtot, &
+            call bp_load_wf(load_wave_filename, evec, ptn, partition_filename, mtot, &
                 fn_ptn_init, mtot_init, op_init_wf, op_type_init, &
                 neig_load_wave, tt_proj)
 
             if (maxiter == 0) then
-                call bp_save_wf(fn_save_wave, evec(:n_eigen), ptn)
+                call bp_save_wf(save_wave_filename, evec(:n_eigen), ptn)
 #ifdef MPI
                 call mpi_finalize(ierr)
 #endif
@@ -416,17 +447,17 @@ program kshell
             !
             read(op_type_init( 4:5 ), *) i
             if (myrank == 0) write(*,'(/,a,i3,a,i3,a,i3,a,i3,a)') &
-                'initial vec = c_',i,'  ( j =',jorb(i),'/2) )|M=', &
+                'initial vec = c_',i,'  ( j =',j_orbitals(i),'/2) )|M=', &
                 mtot_init,'/2>'
             if (myrank == 0) write(*,'(/,a,i3)') 'neig_load_wave = ', neig_load_wave 
 
             call opr_m_one_anh(op_init_wf, i, mtot - mtot_init)
-            call bp_load_wf(fn_load_wave, evec, ptn, fn_ptn, mtot, &
+            call bp_load_wf(load_wave_filename, evec, ptn, partition_filename, mtot, &
                 fn_ptn_init, mtot_init, op_init_wf, op_type_init, &
                 neig_load_wave, tt_proj)
 
             if (maxiter == 0) then
-                call bp_save_wf(fn_save_wave, evec(:n_eigen), ptn)
+                call bp_save_wf(save_wave_filename, evec(:n_eigen), ptn)
 #ifdef MPI
                 call mpi_finalize(ierr)
 #endif
@@ -438,7 +469,7 @@ program kshell
 
         end if
 
-        if (fn_ptn_init == c_no_init) fn_ptn_init = fn_ptn
+        if (fn_ptn_init == c_no_init) fn_ptn_init = partition_filename
 
         if ( neig_load_wave <= -1 .and. n_eig_init > size(evec) ) then
             deallocate( eval, evec ) 
@@ -449,7 +480,7 @@ program kshell
             end do
         end if
 
-        call bp_load_wf(fn_load_wave, evec, ptn, fn_ptn, mtot, &
+        call bp_load_wf(load_wave_filename, evec, ptn, partition_filename, mtot, &
             fn_ptn_init, mtot_init, op_init_wf, op_type_init, &
             neig_load_wave, tt_proj )
         
@@ -458,20 +489,23 @@ program kshell
         
         if (myrank == 0) write(*,*) ' load w.f. finished'
      
-    end if
+    end if  ! End of load wave function
 
     call init_bridge_partitions(wf, ptn)
     call init_bp_operator(wf, j_square)
     call init_bp_operator(wf, hamltn, verbose=.true.)
-    call set_kshell_func(wf, hamltn, j_square)
+    call set_kshell_func(wf, hamltn, j_square)  ! wf_save => wf, hamltn_save => hamltn, j_square_save => j_square
     call stop_stopwatch(time_preproc)
 
-    if (is_bl_lan) then
+    if (is_block_lanczos) then
         do j = 1, n_block
             if ( associated(evec(j)%p) ) then
-                bl_evec(:,j) = evec(j)%p
+                ! If evec%p is pointing to a target:
+                block_evec(:, j) = evec(j)%p
             else
-                call gaussian_random_mat( ptn%local_dim, bl_evec(:,j) )
+                ! Draw ptn%local_dim standard normal distributed numbers
+                ! and put them into block_evec(:, j).
+                call gaussian_random_mat( ptn%local_dim, block_evec(:, j) )
             end if
         end do
         
@@ -480,30 +514,33 @@ program kshell
         end do
     end if
 
-    write(ctmp,'(a,"_",i0)') trim(fn_ptn),mtot
-    call set_lanczos_tmp_fn(ctmp, fn_save_wave/=c_no_init)
+    write(ctmp,'(a,"_",i0)') trim(partition_filename),mtot  ! Writes <something>.ptn_<integer> to 'ctmp'
+    call set_lanczos_tmp_fn(ctmp, save_wave_filename/=c_no_init)
 
-    if ( is_bl_lan ) then
+    if ( is_block_lanczos ) then
+        ! kwf is the precision of the elements (reals) in the lanczos vector.
         if (kwf == 4) stop 'Not implemented kwf=4 and block Lanczos'
         if (is_double_j) then
             call tr_block_lanczos( matvec_block, matvec_block_jj, &
-                ptn%local_dim, n_block, n_eigen, eval, bl_evec, &
+                ptn%local_dim, n_block, n_eigen, eval, block_evec, &
                 max_lanc_vec=max_lanc_vec, maxiter=maxiter, &
-                tol=tol, n_res_vec=n_restart_vec, &
+                lanc_convergence_tol=lanc_convergence_tol, n_res_vec=n_restart_vec, &
                 is_load_snapshot=is_load_snapshot, &
                 eval_jj=mtot*(mtot+2)*0.25d0 )
         else
             call tr_block_lanczos( matvec_block, matvec_block_jj, &
-                ptn%local_dim, n_block, n_eigen, eval, bl_evec, &
+                ptn%local_dim, n_block, n_eigen, eval, block_evec, &
                 max_lanc_vec=max_lanc_vec, maxiter=maxiter, &
-                tol=tol, n_res_vec=n_restart_vec, &
+                lanc_convergence_tol=lanc_convergence_tol, n_res_vec=n_restart_vec, &
                 is_load_snapshot=is_load_snapshot )
         end if
     end if
 
-    if ( is_bl_lan ) then
+    if ( is_block_lanczos ) then
         if ( allocated(evec) ) then 
-            do i = 1, size(evec) 
+            ! De-allocate attribute p of the elements of evec if it
+            ! points to a target, and then deallocate evec.
+            do i = 1, size(evec)
                 if (associated(evec(i)%p)) deallocate(evec(i)%p)
             end do
             deallocate(evec)
@@ -515,7 +552,7 @@ program kshell
             call wf_alloc_vec( evec(i), ptn )
             !$omp parallel do
             do mq = 1, ptn%local_dim
-                evec(i)%p(mq) = bl_evec(mq, i)
+                evec(i)%p(mq) = block_evec(mq, i)
             end do
             
             do mq = ptn%local_dim+1, ptn%max_local_dim
@@ -523,10 +560,11 @@ program kshell
             end do
         end do
         
-        deallocate( bl_evec )
+        deallocate( block_evec )
     end if
 
     if (is_lanczos) then
+        ! Normal lanczos (not block).
         if (.not. associated(evec(1)%p) .and. .not. is_load_snapshot) &
             call wf_random(ptn, evec(1), mtot, is_double_j)
 
@@ -540,12 +578,12 @@ program kshell
                         matvec_jj, eval_jj=dble(mtot*(mtot+2)*0.25d0), n_eig=n_eigen, &
                         is_load_snapshot=is_load_snapshot, &
                         n_restart_vec=n_restart_vec, max_lanc_vec=max_lanc_vec, &
-                        maxiter=maxiter, mode_lv_hdd=mode_lv_hdd, tol=tol)
+                        maxiter=maxiter, mode_lv_hdd=mode_lv_hdd, lanc_convergence_tol=lanc_convergence_tol)
             else ! diag w/o jj
                 call lanczos_main(matvec, dotprod, ptn%max_local_dim, eval, evec, &
                         matvec_jj, is_load_snapshot=is_load_snapshot, n_eig=n_eigen, &
                         n_restart_vec=n_restart_vec, max_lanc_vec=max_lanc_vec, &
-                        maxiter=maxiter, mode_lv_hdd=mode_lv_hdd, tol=tol)
+                        maxiter=maxiter, mode_lv_hdd=mode_lv_hdd, lanc_convergence_tol=lanc_convergence_tol)
             end if
 
             do i = 1, n_eigen
@@ -568,7 +606,7 @@ program kshell
     call print_summary_stopwatch()
     call start_stopwatch(time_total)
 
-    if ( fn_save_wave == c_no_init .and. &
+    if ( save_wave_filename == c_no_init .and. &
         op_type_init /= c_no_init .and. op_type_init /= "copy" ) &
         goto 999 
 
@@ -589,15 +627,15 @@ program kshell
         if (maxiter > 0) then
             evec(i)%eval = eval(i)
         else ! just read wave function
-            call ex_val(wf, evec(i), hamltn, evec(i)%eval)
+            call expectation_value(wf, evec(i), hamltn, evec(i)%eval)
         end if
     end do
 
     call finalize_bp_operator(wf, hamltn)
-    allocate( occ(n_jorb_pn) )
+    allocate( occ(n_j_orbitals_pn) )
 
     if (myrank == 0) then 
-        write(*,'(/,1a,2f7.3)') ' effective charges ',eff_charge
+        write(*,'(/,1a,2f7.3)') ' effective charges ',effective_charge
         write(*,'(a,4f8.4)')  ' gl,gs = ', gl, gs
         if (maxval(orbs_ratio) > 0) then
             write(*,'(a)', advance='no') ' orbits for ratio : '
@@ -621,11 +659,13 @@ program kshell
     if (myrank == 0) write(*,'(a)') "-------------------------------------------------"
 
     do i = 1, n_eigen
-        call ex_val(wf, evec(i), j_square, x)
+        ! Write calculations to file (actually to stdout).
+        ! And calculate H expectation values?
+        call expectation_value(wf, evec(i), j_square, x)    ! Calculate < evec(i) | j_square | evec(i) >
         Jguess = guess_J_from_JJ(ptn, x)
         evec(i)%jj = Jguess
         if (beta_cm /= 0.d0) then 
-            call ex_val(wf, evec(i), ham_cm, hcm)
+            call expectation_value(wf, evec(i), ham_cm, hcm)
             evec(i)%eval = evec(i)%eval - beta_cm * hcm
         end if
         
@@ -635,7 +675,7 @@ program kshell
                 "/2  prty ", ptn%iprty
         end if
 
-        call ex_val(wf, evec(i), t_square, x)
+        call expectation_value(wf, evec(i), t_square, x)
         evec(i)%tt = guess_J_from_JJ(ptn, x)
         
         if (myrank == 0) then
@@ -649,10 +689,10 @@ program kshell
         end if
 
         call ex_occ_orb(evec(i), occ)
-        if (myrank == 0) write(*,'(" <p Nj>", 8f7.3)') occ(:n_jorb(1))
-        if (myrank == 0) write(*,'(" <n Nj>", 8f7.3)') occ(n_jorb(1)+1:)
+        if (myrank == 0) write(*,'(" <p Nj>", 8f7.3)') occ(:n_j_orbitals(1))
+        if (myrank == 0) write(*,'(" <n Nj>", 8f7.3)') occ(n_j_orbitals(1)+1:)
         if (Jguess > 0) then
-            ! call ex_val(wf, evec(i), r2y2, x)
+            ! call expectation_value(wf, evec(i), r2y2, x)
             ! if (myrank==0) write(*,'(1a, 100f7.3)') " < Q > ", x*dsqrt(16.0d0*pi/5.0d0)
 
             ops(1)%p => r2y2
@@ -661,7 +701,7 @@ program kshell
             call bp_ex_vals_pn(wf, evec(i), ops, evs)
             evs(:,1) = evs(:,1) * dsqrt(16.0d0*pi/5.0d0)
             if (myrank==0) then 
-                x = dot_product(evs(:,1), eff_charge)
+                x = dot_product(evs(:,1), effective_charge)
                 c = dcg(Jguess, mtot, 4, 0, Jguess, mtot)
                 if (abs(c)> 1.d-8) then
                     c = dcg(Jguess, Jguess, 4, 0, Jguess, Jguess) / c
@@ -690,7 +730,7 @@ program kshell
             call ratio_nocc_orbs(evec(i), orbs_ratio)
         end if
         ! call ratio_nocc(evec(i))
-        ! call ph_ratio_nocc(evec(i), 1, min(n_jorb(1)+1, n_jorb_pn))
+        ! call ph_ratio_nocc(evec(i), 1, min(n_j_orbitals(1)+1, n_j_orbitals_pn))
 
         if (myrank == 0) write(*,'(1a)') &
             "-------------------------------------------------"
@@ -708,8 +748,8 @@ program kshell
     call finalize_bp_operator(wf, hamltn)
     if (beta_cm /= 0.d0) call finalize_bp_operator(wf, ham_cm)
     call finalize_bridge_partitions(wf)
-    if ( associated(evec(1)%p) .and. fn_save_wave /= c_no_init) &
-        call bp_save_wf(fn_save_wave, evec(:n_eigen), ptn)
+    if ( associated(evec(1)%p) .and. save_wave_filename /= c_no_init) &
+        call bp_save_wf(save_wave_filename, evec(:n_eigen), ptn)
     if (is_calc_tbme) then 
         call init_bridge_partitions(wf, ptn)
         ! call calc_tbme(wf, evec)
@@ -794,7 +834,7 @@ program kshell
 
         if (n == 0) return
         if (myrank == 0) write(*,'(a,a,i5,a,i5,a/)') 'load initial ', &
-            trim(fn_load_wave), nb+n, ' vecs => ', nb, ' vecs.'
+            trim(load_wave_filename), nb+n, ' vecs => ', nb, ' vecs.'
 
         do iv = 1, nb
             evec(iv)%eval = 0.d0
@@ -857,7 +897,7 @@ program kshell
         type(type_bridge_partitions), intent(inout) :: bp
         integer :: jj, ipn, iprty, n, ij12, ij34, k1, k2, k3, k4, jl, ml
         integer :: i, nop, iop
-        real(8) :: v, x, e, occ(n_jorb_pn, size(evec))
+        real(8) :: v, x, e, occ(n_j_orbitals_pn, size(evec))
         type(opr_m) :: op
         integer, allocatable :: idxs(:,:)
         real(8), allocatable :: vs(:), evs(:,:)
@@ -890,7 +930,7 @@ program kshell
                             k2 = jcouple(jj, iprty, ipn)%idx(2, ij12)
                             k3 = jcouple(jj, iprty, ipn)%idx(1, ij34)
                             k4 = jcouple(jj, iprty, ipn)%idx(2, ij34)
-                            v = hamltn_j%p2(jj, iprty, ipn)%v(ij12, ij34) 
+                            v = hamltn_j%p2(jj, iprty, ipn)%reduced_matrix_element(ij12, ij34) 
                             idxs(:,iop) = (/ k1, k2, k3, k4, jj, iprty, ipn /)
                             vs(iop) = v 
                         end do
@@ -950,10 +990,10 @@ program kshell
                     evec(i)%jj, ptn%iprty, evec(i)%tt, evec(i)%eval
 
             write(*,'(a, i5)') "SPE,   i   j      Eij  &
-                    &           <E>  ",  n_jorb_pn
+                    &           <E>  ",  n_j_orbitals_pn
             e = 0.d0
-            do k1 = 1, n_jorb_pn
-                v = hamltn_j%p1%v(k1, k1) / sqrt(dble(jorb(k1)+1))
+            do k1 = 1, n_j_orbitals_pn
+                v = hamltn_j%onebody%reduced_matrix_element(k1, k1) / sqrt(dble(j_orbitals(k1)+1))
                 write(*,'(a, 2i4, 2f14.7)') "SPE ", k1, k1, v, occ(k1, i)
                 e = e + v * occ(k1, i)
             end do

@@ -3,8 +3,8 @@ module operator_mscheme
   ! m-scheme operator
   ! 
   !$ use omp_lib
-  use model_space, only: korb, itorb, n_jorb, n_jorb_pn, jorb, iporb, n_morb, &
-       & n_morb_pn, morbn, korbn, myrank, jorbn
+  use model_space, only: korb, isospin_orbitals, n_j_orbitals, n_j_orbitals_pn, j_orbitals, parity_orbitals, n_morb, &
+       & n_morb_pn, morbn, korbn, myrank, j_orbitalsn
   use operator_jscheme, only : opr_j, jcouple, jcouplemax
   use rotation_group, only :dcg
   implicit none
@@ -128,7 +128,7 @@ contains
     real(8) :: v, c12, c34
     type(jz_2b_idx), pointer :: noc1, noc2
     logical :: is
-    real(8) :: t(n_jorb_pn, n_jorb_pn)
+    real(8) :: t(n_j_orbitals_pn, n_j_orbitals_pn)
 
     om%irank = oj%irank
     om%mm    = 0
@@ -136,7 +136,7 @@ contains
     om%ipr1_type = oj%ipr1_type
     om%is_j_square = .false.
     if (.not. allocated(idx_nocc2b)) call init_operator_mscheme()
-    nj = maxval(n_jorb)
+    nj = maxval(n_j_orbitals)
 
     ! --- two-body beta ---
     if (om%nbody == -12 .or. om%nbody == -13) then
@@ -150,19 +150,19 @@ contains
        iprty = 1
        if (om%ipr1_type /= 1) iprty = -1
 
-       do k1 = 1, n_jorb_pn
+       do k1 = 1, n_j_orbitals_pn
           n1 = k1
-          if ( n1 > n_jorb(1) ) n1 = n1 - n_jorb(1)
-          j1 = jorb(k1)
+          if ( n1 > n_j_orbitals(1) ) n1 = n1 - n_j_orbitals(1)
+          j1 = j_orbitals(k1)
           ipn = 1
-          if (itorb(k1) == 1) ipn = 2
-          do k2 = 1, n_jorb_pn
-             if (itorb(k1) /= itorb(k2)) cycle
-             if (iporb(k1)*iporb(k2) /= iprty) cycle
-!             if (abs(oj%p1%v(k1,k2)) < 1.d-8) cycle
+          if (isospin_orbitals(k1) == 1) ipn = 2
+          do k2 = 1, n_j_orbitals_pn
+             if (isospin_orbitals(k1) /= isospin_orbitals(k2)) cycle
+             if (parity_orbitals(k1)*parity_orbitals(k2) /= iprty) cycle
+!             if (abs(oj%onebody%reduced_matrix_element(k1,k2)) < 1.d-8) cycle
              n2 = k2
-             if ( n2 > n_jorb(1) ) n2 = n2 - n_jorb(1)
-             j2 = jorb(k2)
+             if ( n2 > n_j_orbitals(1) ) n2 = n2 - n_j_orbitals(1)
+             j2 = j_orbitals(k2)
              noc1 => idx_nocc2b(ipn, n1, n2)
              if ( .not. allocated(noc1%md) ) cycle
              m1 = max( -om%irank, lbound(noc1%md, 1) )
@@ -178,7 +178,7 @@ contains
                    mm1 = morbn(i, ipn)
                    mm2 = morbn(j, ipn)
                    om%nocc1b(ipn, n1, n2)%m(md)%v(ij) &
-                        = oj%p1%v(k1, k2) &
+                        = oj%onebody%reduced_matrix_element(k1, k2) &
                         * dcg(j2, mm2, 2*om%irank, 2*md, j1, mm1) &
                         / sqrt(dble(j1+1))
                 end do
@@ -204,42 +204,42 @@ contains
 
     ! one-body rank=0 operator
     do ipn = 1, 2
-       allocate( om%spe(ipn)%v(n_jorb(ipn)) )
-       do k1 = 1, n_jorb(ipn)
+       allocate( om%spe(ipn)%v(n_j_orbitals(ipn)) )
+       do k1 = 1, n_j_orbitals(ipn)
           n1 = k1
-          if (ipn==2) n1 = k1 + n_jorb(1)
-          om%spe(ipn)%v(k1) = oj%p1%v(n1,n1)/sqrt(dble(jorb(n1)+1))
+          if (ipn==2) n1 = k1 + n_j_orbitals(1)
+          om%spe(ipn)%v(k1) = oj%onebody%reduced_matrix_element(n1,n1)/sqrt(dble(j_orbitals(n1)+1))
        end do
     end do
 
     ! not implemented non-diagonal OBME yet
-    t(:,:) = oj%p1%v(:,:)
-    forall(k1=1:n_jorb_pn) t(k1,k1) = 0.d0
+    t(:,:) = oj%onebody%reduced_matrix_element(:,:)
+    forall(k1=1:n_j_orbitals_pn) t(k1,k1) = 0.d0
     if (maxval(abs(t)) > 1.d-5) stop 'non-diag OBME error'
     
     if (om%nbody == 1) return
 
     !  p-p TBME in pairing combination
-    ! do n1 = 1, n_jorb(1)
-    !    do n2 = n1, n_jorb(1)
+    ! do n1 = 1, n_j_orbitals(1)
+    !    do n2 = n1, n_j_orbitals(1)
     ipn = 1
     !$omp parallel do private( n12, n1, n2, n3, n4, ip12, maxm, mm, ij, &
     !$omp &                    i, j, k, l, j1, j2, j3, j4, m1, m2, m3, m4, v, &
     !$omp &                    c12, c34, jcplmin, jcplmax, jcpl, ij12, ij34 ) &
     !$omp &           schedule( dynamic )
-    do n12 = 1, n_jorb(1) * n_jorb(1)
-       n1 = (n12 - 1) / n_jorb(1) + 1
-       n2 = mod(n12 - 1, n_jorb(1)) + 1 
+    do n12 = 1, n_j_orbitals(1) * n_j_orbitals(1)
+       n1 = (n12 - 1) / n_j_orbitals(1) + 1
+       n2 = mod(n12 - 1, n_j_orbitals(1)) + 1 
        if (n1>n2) cycle
     
        if (.not. allocated(idx_nocc2b(ipn,n1,n2)%mp)) cycle
        ! noc1 => idx_nocc2b(ipn,n1,n2)
-       ip12 = iporb(n1)*iporb(n2)
+       ip12 = parity_orbitals(n1)*parity_orbitals(n2)
        if (ip12==-1) ip12 = 2
-       do n3 = 1, n_jorb(1)
-          do n4 = n3, n_jorb(1)
+       do n3 = 1, n_j_orbitals(1)
+          do n4 = n3, n_j_orbitals(1)
              if (.not. allocated(idx_nocc2b(ipn,n3,n4)%mp)) cycle
-             if (iporb(n1)*iporb(n2) /= iporb(n3)*iporb(n4)) cycle
+             if (parity_orbitals(n1)*parity_orbitals(n2) /= parity_orbitals(n3)*parity_orbitals(n4)) cycle
              ! noc2 => idx_nocc2b(ipn,n3,n4)
              maxm = min( ubound(idx_nocc2b(ipn,n1,n2)%mp,1), &
                   &      ubound(idx_nocc2b(ipn,n3,n4)%mp,1) )
@@ -251,15 +251,15 @@ contains
                 do ij = 1,  size(idx_nocc2b(ipn,n1,n2)%mp(mm)%idx, 2)
                    i = idx_nocc2b(ipn,n1,n2)%mp(mm)%idx(1,ij)
                    j = idx_nocc2b(ipn,n1,n2)%mp(mm)%idx(2,ij)
-                   j1 = jorb(n1)
-                   j2 = jorb(n2)
+                   j1 = j_orbitals(n1)
+                   j2 = j_orbitals(n2)
                    m1 = morbn(i,ipn)
                    m2 = morbn(j,ipn)
                    do kl = 1,  size(idx_nocc2b(ipn,n3,n4)%mp(mm)%idx, 2)
                       k = idx_nocc2b(ipn,n3,n4)%mp(mm)%idx(1,kl)
                       l = idx_nocc2b(ipn,n3,n4)%mp(mm)%idx(2,kl)
-                      j3 = jorb(n3)
-                      j4 = jorb(n4)
+                      j3 = j_orbitals(n3)
+                      j4 = j_orbitals(n4)
                       m3 = morbn(k,ipn)
                       m4 = morbn(l,ipn)
                       v = 0.0d0
@@ -274,7 +274,7 @@ contains
                          ij34 = jcouple(jcpl,ip12,ipn)%idxrev(n3,n4)
                          if (ij12*ij34 == 0) cycle
                          ! write(*,*) jcpl, jcplmin, jcplmax, ij12, ij34
-                         v = v + oj%p2(jcpl,ip12,ipn)%v(ij12,ij34) &
+                         v = v + oj%p2(jcpl,ip12,ipn)%reduced_matrix_element(ij12,ij34) &
                               & * dcg(j1,m1,j2,m2,2*jcpl,2*mm) &
                               & * dcg(j3,m3,j4,m4,2*jcpl,2*mm)
                       end do
@@ -288,32 +288,32 @@ contains
     end do
 
     !  n-n TBME in pairing combination 
-!    do k1 = n_jorb(1)+1, n_jorb_pn
-!       n1 = k1 - n_jorb(1)
-!       do k2 = k1, n_jorb_pn
-!          n2 = k2 - n_jorb(1)
+!    do k1 = n_j_orbitals(1)+1, n_j_orbitals_pn
+!       n1 = k1 - n_j_orbitals(1)
+!       do k2 = k1, n_j_orbitals_pn
+!          n2 = k2 - n_j_orbitals(1)
     ipn = 2
     !$omp parallel do private( n12, n1, n2, n3, n4, k1, k2, k3, k4, &
     !$omp &                    ip12, maxm, mm, ij, &
     !$omp &                    i, j, k, l, j1, j2, j3, j4, m1, m2, m3, m4, v, &
     !$omp &                    c12, c34, jcplmin, jcplmax, jcpl, ij12, ij34 ) &
     !$omp &           schedule( dynamic )
-    do n12 = 1, n_jorb(2) * n_jorb(2)
-       n1 = (n12 - 1) / n_jorb(2) + 1
-       n2 = mod(n12 - 1, n_jorb(2)) + 1 
+    do n12 = 1, n_j_orbitals(2) * n_j_orbitals(2)
+       n1 = (n12 - 1) / n_j_orbitals(2) + 1
+       n2 = mod(n12 - 1, n_j_orbitals(2)) + 1 
        if (n1 > n2) cycle
-       k1 = n1 + n_jorb(1)
-       k2 = n2 + n_jorb(1)
+       k1 = n1 + n_j_orbitals(1)
+       k2 = n2 + n_j_orbitals(1)
        if (.not. allocated(idx_nocc2b(ipn,n1,n2)%mp)) cycle
        ! noc1 => idx_nocc2b(ipn, n1, n2)
-       ip12 = iporb(k1)*iporb(k2)
+       ip12 = parity_orbitals(k1)*parity_orbitals(k2)
        if (ip12==-1) ip12 = 2
-       do k3 = n_jorb(1)+1, n_jorb_pn
-          n3 = k3 - n_jorb(1)
-          do k4 = k3, n_jorb_pn
-             n4 = k4 - n_jorb(1)
+       do k3 = n_j_orbitals(1)+1, n_j_orbitals_pn
+          n3 = k3 - n_j_orbitals(1)
+          do k4 = k3, n_j_orbitals_pn
+             n4 = k4 - n_j_orbitals(1)
              if (.not. allocated(idx_nocc2b(ipn,n3,n4)%mp)) cycle
-             if (iporb(k1)*iporb(k2) /= iporb(k3)*iporb(k4)) cycle
+             if (parity_orbitals(k1)*parity_orbitals(k2) /= parity_orbitals(k3)*parity_orbitals(k4)) cycle
              ! noc2 => idx_nocc2b(ipn, n3, n4)
              maxm = min( ubound(idx_nocc2b(ipn, n1, n2)%mp,1), &
                   &      ubound(idx_nocc2b(ipn, n3, n4)%mp,1))
@@ -325,15 +325,15 @@ contains
                 do ij = 1,  size(idx_nocc2b(ipn, n1, n2)%mp(mm)%idx, 2)
                    i = idx_nocc2b(ipn, n1, n2)%mp(mm)%idx(1,ij)
                    j = idx_nocc2b(ipn, n1, n2)%mp(mm)%idx(2,ij)
-                   j1 = jorb(k1)
-                   j2 = jorb(k2)
+                   j1 = j_orbitals(k1)
+                   j2 = j_orbitals(k2)
                    m1 = morbn(i,ipn)
                    m2 = morbn(j,ipn)
                    do kl = 1,  size(idx_nocc2b(ipn, n3, n4)%mp(mm)%idx, 2)
                       k = idx_nocc2b(ipn, n3, n4)%mp(mm)%idx(1,kl)
                       l = idx_nocc2b(ipn, n3, n4)%mp(mm)%idx(2,kl)
-                      j3 = jorb(k3)
-                      j4 = jorb(k4)
+                      j3 = j_orbitals(k3)
+                      j4 = j_orbitals(k4)
                       m3 = morbn(k,ipn)
                       m4 = morbn(l,ipn)
                       v = 0.0d0
@@ -348,7 +348,7 @@ contains
                          ij34 = jcouple(jcpl,ip12,ipn)%idxrev(k3,k4)
                          if (ij12*ij34 == 0) cycle
                          ! write(*,*) jcpl, jcplmin, jcplmax, ij12, ij34
-                         v = v + oj%p2(jcpl,ip12,ipn)%v(ij12,ij34) &
+                         v = v + oj%p2(jcpl,ip12,ipn)%reduced_matrix_element(ij12,ij34) &
                               & * dcg(j1,m1,j2,m2,2*jcpl,2*mm) &
                               & * dcg(j3,m3,j4,m4,2*jcpl,2*mm)
                       end do
@@ -366,28 +366,28 @@ contains
 
     !  p-n TBME in density combination
     ipn = 3
-!    do k1 = 1, n_jorb(1)
+!    do k1 = 1, n_j_orbitals(1)
 !       n1 = k1
-!       do k3 = 1, n_jorb(1)
+!       do k3 = 1, n_j_orbitals(1)
 !          n3 = k3
     !$omp parallel do private( k13, k1, k2, k3, k4, n1, n2, n3, n4, ip12, &
     !$omp &                    maxm, mm, ik, jl, i, j, k, l, j1, j2, j3, j4, &
     !$omp &                    m1, m2, m3, m4, m12, v, jcplmin, jcplmax, jcpl, ij12, ij34) &
     !$omp &           schedule (dynamic)
-    do k13 = 1, n_jorb(1)*n_jorb(1)
-       k1 = (k13 - 1) / n_jorb(1) + 1
-       k3 = mod(k13 - 1, n_jorb(1)) + 1 
+    do k13 = 1, n_j_orbitals(1)*n_j_orbitals(1)
+       k1 = (k13 - 1) / n_j_orbitals(1) + 1
+       k3 = mod(k13 - 1, n_j_orbitals(1)) + 1 
        n1 = k1
        n3 = k3
        if (.not. allocated(idx_nocc2b(1,n1,n3)%md)) cycle
        ! noc1 => idx_nocc2b(1, n1, n3)
-       do k2 = n_jorb(1)+1, n_jorb_pn
-          n2 = k2 - n_jorb(1)
-          ip12 = iporb(k1)*iporb(k2)
+       do k2 = n_j_orbitals(1)+1, n_j_orbitals_pn
+          n2 = k2 - n_j_orbitals(1)
+          ip12 = parity_orbitals(k1)*parity_orbitals(k2)
           if (ip12==-1) ip12 = 2
-          do k4 = n_jorb(1)+1, n_jorb_pn
-             if (iporb(k1)*iporb(k2) /= iporb(k3)*iporb(k4)) cycle
-             n4 = k4 - n_jorb(1)
+          do k4 = n_j_orbitals(1)+1, n_j_orbitals_pn
+             if (parity_orbitals(k1)*parity_orbitals(k2) /= parity_orbitals(k3)*parity_orbitals(k4)) cycle
+             n4 = k4 - n_j_orbitals(1)
              if (.not. allocated(idx_nocc2b(2,n2,n4)%md)) cycle
              ! noc2 => idx_nocc2b(2, n2, n4)
              maxm = min(ubound(idx_nocc2b(1, n1, n3)%md,1), ubound(idx_nocc2b(2, n2, n4)%md,1))
@@ -399,15 +399,15 @@ contains
                 do ik = 1, size(idx_nocc2b(1, n1, n3)%md(mm)%idx, 2)
                    i = idx_nocc2b(1, n1, n3)%md(mm)%idx(1,ik)
                    k = idx_nocc2b(1, n1, n3)%md(mm)%idx(2,ik)
-                   j1 = jorb(k1)
-                   j3 = jorb(k3)
+                   j1 = j_orbitals(k1)
+                   j3 = j_orbitals(k3)
                    m1 = morbn(i,1)
                    m3 = morbn(k,1)
                    do jl = 1,  size(idx_nocc2b(2, n2, n4)%md(-mm)%idx, 2)
                       j = idx_nocc2b(2, n2, n4)%md(-mm)%idx(1,jl)
                       l = idx_nocc2b(2, n2, n4)%md(-mm)%idx(2,jl)
-                      j2 = jorb(k2)
-                      j4 = jorb(k4)
+                      j2 = j_orbitals(k2)
+                      j4 = j_orbitals(k4)
                       m2 = morbn(j,2)
                       m4 = morbn(l,2)
                       m12 = (m1+m2)/2
@@ -419,7 +419,7 @@ contains
                          ij34 = jcouple(jcpl,ip12,ipn)%idxrev(k3,k4)
                          if (ij12*ij34 == 0) cycle
                          ! write(*,*) jcpl, jcplmin, jcplmax, ij12, ij34
-                         v = v +  oj%p2(jcpl,ip12,ipn)%v(ij12,ij34) &
+                         v = v +  oj%p2(jcpl,ip12,ipn)%reduced_matrix_element(ij12,ij34) &
                               & * dcg(j1,m1,j2,m2,2*jcpl,2*m12) &
                               & * dcg(j3,m3,j4,m4,2*jcpl,2*m12)
                       end do
@@ -434,10 +434,10 @@ contains
     !return
     ! deallocate zero partition
     do ipn = 1, 3
-       do n1 = 1, maxval(n_jorb)
-          do n2 = 1, maxval(n_jorb)
-             do n3 = 1, maxval(n_jorb)
-                do n4 = 1, maxval(n_jorb)
+       do n1 = 1, maxval(n_j_orbitals)
+          do n2 = 1, maxval(n_j_orbitals)
+             do n3 = 1, maxval(n_j_orbitals)
+                do n4 = 1, maxval(n_j_orbitals)
                    if (.not. allocated(om%nocc2b(ipn,n1,n2,n3,n4)%m)) cycle
                    is = .true.
                    do mm = lbound(om%nocc2b(ipn,n1,n2,n3,n4)%m, 1), &
@@ -463,20 +463,20 @@ contains
       iprty = 1
       if (om%ipr1_type /= 1) iprty = -1
 
-      do k1 = 1, n_jorb_pn
+      do k1 = 1, n_j_orbitals_pn
          n1 = k1
-         if ( n1 > n_jorb(1) ) n1 = n1 - n_jorb(1)
-         j1 = jorb(k1)
+         if ( n1 > n_j_orbitals(1) ) n1 = n1 - n_j_orbitals(1)
+         j1 = j_orbitals(k1)
          ipn = 1
-         if (itorb(k1) == 1) ipn = 2
-         do k2 = 1, n_jorb_pn
-            if (itorb(k1)==itorb(k2)) cycle
+         if (isospin_orbitals(k1) == 1) ipn = 2
+         do k2 = 1, n_j_orbitals_pn
+            if (isospin_orbitals(k1)==isospin_orbitals(k2)) cycle
             n2 = k2
-            if ( n2 > n_jorb(1) ) n2 = n2 - n_jorb(1)
-            j2 = jorb(k2)
-            if (iporb(k1)*iporb(k2) /= iprty) cycle
+            if ( n2 > n_j_orbitals(1) ) n2 = n2 - n_j_orbitals(1)
+            j2 = j_orbitals(k2)
+            if (parity_orbitals(k1)*parity_orbitals(k2) /= iprty) cycle
             noc1 => idx_gt(ipn, n1, n2)
-            !             if (abs(oj%p1%v(k1,k2)) < 1.d-8) cycle
+            !             if (abs(oj%onebody%reduced_matrix_element(k1,k2)) < 1.d-8) cycle
 
             if ( .not. allocated(noc1%md) ) cycle
             m1 = max( -om%irank, lbound(noc1%md, 1) )
@@ -492,7 +492,7 @@ contains
                   mm1 = morbn(i, ipn)
                   mm2 = morbn(j, 3-ipn)
                   om%nocc1b(ipn, n1, n2)%m(md)%v(ij) &
-                       = oj%p1%v(k1, k2) &
+                       = oj%onebody%reduced_matrix_element(k1, k2) &
                        * dcg(j2, mm2, 2*om%irank, 2*md, j1, mm1) &
                        / sqrt(dble(j1+1))
                end do
@@ -515,30 +515,30 @@ contains
          ipn = 1
          inp = 2
          nj1 = 0
-         nj2 = n_jorb(1)
+         nj2 = n_j_orbitals(1)
       else
          ipn = 2
          inp = 1
-         nj1 = n_jorb(1)
+         nj1 = n_j_orbitals(1)
          nj2 = 0
       end if
       allocate( om%nocc2b(1, nj, nj, nj, nj) )
 
       !  pp-nn TBME in pairing combination 
-      do n1 = 1, n_jorb(ipn)
+      do n1 = 1, n_j_orbitals(ipn)
          k1 = n1 + nj1
-         do n2 = n1, n_jorb(ipn)
+         do n2 = n1, n_j_orbitals(ipn)
             k2 = n2 + nj1
             if (.not. allocated(idx_nocc2b(ipn, n1, n2)%mp)) cycle
             noc1 => idx_nocc2b(ipn, n1, n2)
-            ip12 = iporb(k1)*iporb(k2)
+            ip12 = parity_orbitals(k1)*parity_orbitals(k2)
             if (ip12==-1) ip12 = 2
-            do n3 = 1, n_jorb(inp)
+            do n3 = 1, n_j_orbitals(inp)
                k3 = n3 + nj2
-               do n4 = n3, n_jorb(inp)
+               do n4 = n3, n_j_orbitals(inp)
                   k4 = n4 + nj2
                   if (.not. allocated(idx_nocc2b(inp, n3, n4)%mp)) cycle
-                  if (iporb(k1)*iporb(k2) /= iporb(k3)*iporb(k4)) cycle
+                  if (parity_orbitals(k1)*parity_orbitals(k2) /= parity_orbitals(k3)*parity_orbitals(k4)) cycle
                   noc2 => idx_nocc2b(inp, n3, n4)
                   maxm = min(ubound(noc1%mp,1), ubound(noc2%mp,1))
                   allocate(om%nocc2b(1,n1,n2,n3,n4)%m(-maxm:maxm))
@@ -549,15 +549,15 @@ contains
                      do ij = 1, size(noc1%mp(mm)%idx, 2)
                         i = noc1%mp(mm)%idx(1,ij)
                         j = noc1%mp(mm)%idx(2,ij)
-                        j1 = jorb(k1)
-                        j2 = jorb(k2)
+                        j1 = j_orbitals(k1)
+                        j2 = j_orbitals(k2)
                         m1 = morbn(i,ipn)
                         m2 = morbn(j,ipn)
                         do kl = 1, size(noc2%mp(mm)%idx, 2)
                            k = noc2%mp(mm)%idx(1,kl)
                            l = noc2%mp(mm)%idx(2,kl)
-                           j3 = jorb(k3)
-                           j4 = jorb(k4)
+                           j3 = j_orbitals(k3)
+                           j4 = j_orbitals(k4)
                            m3 = morbn(k,inp)
                            m4 = morbn(l,inp)
                            v = 0.0d0
@@ -572,7 +572,7 @@ contains
                               ij34 = jcouple(jcpl,ip12,inp)%idxrev(k3,k4)
                               if (ij12*ij34 == 0) cycle
                               ! write(*,*) jcpl, jcplmin, jcplmax, ij12, ij34
-                              v = v + oj%p2(jcpl,ip12,ipn)%v(ij12,ij34) &
+                              v = v + oj%p2(jcpl,ip12,ipn)%reduced_matrix_element(ij12,ij34) &
                                    * dcg(j1,m1,j2,m2,2*jcpl,2*mm) &
                                    * dcg(j3,m3,j4,m4,2*jcpl,2*mm)
                            end do
@@ -599,8 +599,8 @@ contains
     integer :: ipn, n1, n2, n3, n4, mm
     if (allocated(op%nocc1b)) then
        do ipn = 1, 2
-          do n1 = 1, maxval(n_jorb)
-             do n2 = 1, maxval(n_jorb)
+          do n1 = 1, maxval(n_j_orbitals)
+             do n2 = 1, maxval(n_j_orbitals)
                 if ( .not. allocated( op%nocc1b(ipn, n1, n2)%m) ) cycle
                 do mm = lbound( op%nocc1b(ipn,n1,n2)%m, 1 ), &
                      ubound(op%nocc1b(ipn,n1,n2)%m, 1)
@@ -617,10 +617,10 @@ contains
 
     if (allocated( op%nocc2b )) then
        do ipn = lbound(op%nocc2b, 1), ubound(op%nocc2b, 1)
-          do n1 = 1, maxval(n_jorb)
-             do n2 = 1, maxval(n_jorb)
-                do n3 = 1, maxval(n_jorb)
-                   do n4 = 1, maxval(n_jorb)
+          do n1 = 1, maxval(n_j_orbitals)
+             do n2 = 1, maxval(n_j_orbitals)
+                do n3 = 1, maxval(n_j_orbitals)
+                   do n4 = 1, maxval(n_j_orbitals)
                       if (.not. allocated(op%nocc2b(ipn,n1,n2,n3,n4)%m)) cycle
                       do mm = lbound(op%nocc2b(ipn,n1,n2,n3,n4)%m, 1), &
                            ubound(op%nocc2b(ipn,n1,n2,n3,n4)%m, 1)
@@ -650,47 +650,47 @@ contains
     integer :: k1, k2, n1, n2, i, j, m1, m2, n, maxm, maxmd, nj, mm, ns, ipn
     integer, allocatable :: m1inv(:), m2inv(:)
     
-    nj = maxval(n_jorb)
+    nj = maxval(n_j_orbitals)
     allocate( idx_nocc2b(2, nj, nj) )
-    allocate(m1inv(-maxval(jorb):maxval(jorb)), &
-         m2inv(-maxval(jorb):maxval(jorb)))
+    allocate(m1inv(-maxval(j_orbitals):maxval(j_orbitals)), &
+         m2inv(-maxval(j_orbitals):maxval(j_orbitals)))
     m1inv = 0
     m2inv = 0
     n_id_idx(:) = 0
     ! pairing combination, mp = m1+m2  for p-p, n-n int.
     ! density combination, md = m1-m2  for p-n int.
-    do k1 = 1, n_jorb_pn
-       if (itorb(k1)==-1) then 
+    do k1 = 1, n_j_orbitals_pn
+       if (isospin_orbitals(k1)==-1) then 
           ipn = 1
           n1 = k1 
        else
           ipn = 2
-          n1 = k1 - n_jorb(1)
+          n1 = k1 - n_j_orbitals(1)
        end if
        forall(i=1:n_morb(ipn), korbn(i,ipn)==k1) m1inv(morbn(i,ipn)) = i
-       do k2 = 1, n_jorb_pn
-          if (itorb(k1)/=itorb(k2)) cycle
-          if (itorb(k1)==-1) then 
+       do k2 = 1, n_j_orbitals_pn
+          if (isospin_orbitals(k1)/=isospin_orbitals(k2)) cycle
+          if (isospin_orbitals(k1)==-1) then 
              n2 = k2
           else
-             n2 = k2 - n_jorb(1)
+             n2 = k2 - n_j_orbitals(1)
           end if
           forall(i=1:n_morb(ipn), korbn(i,ipn)==k2) m2inv(morbn(i,ipn)) = i
-          maxm = (jorb(k1)+jorb(k2))/2
+          maxm = (j_orbitals(k1)+j_orbitals(k2))/2
           if (k1==k2) maxm = maxm - 1
-          maxmd = (jorb(k1)+jorb(k2))/2
+          maxmd = (j_orbitals(k1)+j_orbitals(k2))/2
           allocate( idx_nocc2b(ipn, n1, n2)%mp(-maxm:maxm), &
                idx_nocc2b(ipn, n1, n2)%md(-maxmd:maxmd) )
           do mm = -maxm, maxm
-             ns = min(maxm-abs(mm)+1, jorb(k1)+1, jorb(k2)+1)
+             ns = min(maxm-abs(mm)+1, j_orbitals(k1)+1, j_orbitals(k2)+1)
              if (k1==k2) ns = (maxm-abs(mm))/2+1
              allocate( idx_nocc2b(ipn, n1, n2)%mp(mm)%idx(2,ns) )
              n_id_idx(ipn+2) = n_id_idx(ipn+2) + 1
              idx_nocc2b(ipn, n1, n2)%mp(mm)%id = n_id_idx(ipn+2)
              n = 0
-             do m1 = -jorb(k1), jorb(k1), 2
+             do m1 = -j_orbitals(k1), j_orbitals(k1), 2
                 m2 = mm*2 - m1
-                if (abs(m2)>jorb(k2)) cycle
+                if (abs(m2)>j_orbitals(k2)) cycle
                 if (k1==k2 .and. m1inv(m1)>=m2inv(m2)) cycle
                 n = n + 1
                 idx_nocc2b(ipn, n1, n2)%mp(mm)%idx(:,n) &
@@ -703,14 +703,14 @@ contains
              if (n/=ns) stop "error"
           end do
           do mm = -maxmd, maxmd
-             ns = min(maxmd-abs(mm)+1, jorb(k1)+1, jorb(k2)+1)
+             ns = min(maxmd-abs(mm)+1, j_orbitals(k1)+1, j_orbitals(k2)+1)
              allocate( idx_nocc2b(ipn, n1, n2)%md(mm)%idx(2,ns) )
              n_id_idx(ipn) = n_id_idx(ipn) + 1
              idx_nocc2b(ipn, n1, n2)%md(mm)%id = n_id_idx(ipn)
              n = 0
-             do m1 = -jorb(k1), jorb(k1), 2
+             do m1 = -j_orbitals(k1), j_orbitals(k1), 2
                 m2 = m1 - mm*2
-                if (abs(m2)>jorb(k2)) cycle
+                if (abs(m2)>j_orbitals(k2)) cycle
                 n = n + 1
                 idx_nocc2b(ipn, n1, n2)%md(mm)%idx(:,n) &
                      & = (/ m1inv(m1), m2inv(m2) /)
@@ -738,10 +738,10 @@ contains
     ipn = 1
     om%nbody = -1
     n = k
-    if (k > n_jorb(1)) then
+    if (k > n_j_orbitals(1)) then
        ipn = 2
        om%nbody = -2
-       n = k - n_jorb(1)
+       n = k - n_j_orbitals(1)
     end if
     om%crt_idx = 0
     do i = 1, n_morb(ipn)
@@ -753,7 +753,7 @@ contains
     if (om%crt_idx==0) stop "ERROR: opr_m_create"
     om%crt_orb = n
     om%crt_v = 1.d0
-    om%ipr1_type = iporb(k)
+    om%ipr1_type = parity_orbitals(k)
 
   end subroutine opr_m_one_crt
 
@@ -769,10 +769,10 @@ contains
     ipn = 1
     om%nbody = -6
     n = k
-    if (k > n_jorb(1)) then
+    if (k > n_j_orbitals(1)) then
        ipn = 2
        om%nbody = -7
-       n = k - n_jorb(1)
+       n = k - n_j_orbitals(1)
     end if
     om%crt_idx = 0
     do i = 1, n_morb(ipn)
@@ -784,7 +784,7 @@ contains
     if (om%crt_idx==0) stop "ERROR: opr_m_anh"
     om%crt_orb = n
     om%crt_v = 1.d0
-    om%ipr1_type = iporb(k)
+    om%ipr1_type = parity_orbitals(k)
     
   end subroutine opr_m_one_anh
   
@@ -800,25 +800,25 @@ contains
     real(8) :: f
     type(jz_2b_idx), pointer :: noc1, noc2
     
-    if (      k1 <= n_jorb(1) .and. k2 <= n_jorb(1) ) then
+    if (      k1 <= n_j_orbitals(1) .and. k2 <= n_j_orbitals(1) ) then
        ipn = 1
        om%nbody = -3
        n1 = k1
        n2 = k2
        jpn = 1
        kpn = 1
-    else if ( k1 > n_jorb(1) .and. k2 > n_jorb(1) ) then
+    else if ( k1 > n_j_orbitals(1) .and. k2 > n_j_orbitals(1) ) then
        ipn = 2
        om%nbody = -4
-       n1 = k1 - n_jorb(1)
-       n2 = k2 - n_jorb(1)
+       n1 = k1 - n_j_orbitals(1)
+       n2 = k2 - n_j_orbitals(1)
        jpn = 2
        kpn = 2
-    else if ( k1 <= n_jorb(1) .and. k2 > n_jorb(1) ) then
+    else if ( k1 <= n_j_orbitals(1) .and. k2 > n_j_orbitals(1) ) then
        ipn = 3
        om%nbody = -5
        n1 = k1
-       n2 = k2 - n_jorb(1)
+       n2 = k2 - n_j_orbitals(1)
        jpn = 1
        kpn = 2
        call init_op_m_gt()
@@ -829,11 +829,11 @@ contains
     f = 1.d0
     if (k1 == k2) f = sqrt( 0.5d0 )
     om%irank = irank
-    om%ipr1_type = iporb(k1) * iporb(k2)
+    om%ipr1_type = parity_orbitals(k1) * parity_orbitals(k2)
 
-    allocate( om%nocc1b(3, n_jorb(jpn), n_jorb(kpn)) ) 
-    j1 = jorb(k1)
-    j2 = jorb(k2)
+    allocate( om%nocc1b(3, n_j_orbitals(jpn), n_j_orbitals(kpn)) ) 
+    j1 = j_orbitals(k1)
+    j2 = j_orbitals(k2)
     if ( j1+j2 < irank*2 .or. abs(j1-j2) > irank*2 ) stop "ERROR two_crt irank"
 
     if (ipn == 3) then
@@ -881,46 +881,46 @@ contains
 
     if ( allocated(idx_gt) ) return
 
-    allocate( idx_gt( 2, maxval(n_jorb), maxval(n_jorb) ) )
-    allocate( m1inv(-maxval(jorb):maxval(jorb)), &
-         m2inv(-maxval(jorb):maxval(jorb)) )
+    allocate( idx_gt( 2, maxval(n_j_orbitals), maxval(n_j_orbitals) ) )
+    allocate( m1inv(-maxval(j_orbitals):maxval(j_orbitals)), &
+         m2inv(-maxval(j_orbitals):maxval(j_orbitals)) )
     m1inv = 0
     m2inv = 0
     ! p-n density combination md = m1-m2
     !     pairing combination mp = m1+m2
-    do k1 = 1, n_jorb_pn
-       if (itorb(k1)==-1) then 
+    do k1 = 1, n_j_orbitals_pn
+       if (isospin_orbitals(k1)==-1) then 
           ipn = 1
           n1 = k1 
        else
           ipn = 2
-          n1 = k1 - n_jorb(1)
+          n1 = k1 - n_j_orbitals(1)
        end if
        inp = 3 - ipn
        do i = 1, n_morb(ipn)
           if (korbn(i,ipn)==k1) m1inv(morbn(i,ipn)) = i
        end do
-       do k2 = 1, n_jorb_pn
-          if (itorb(k1)==itorb(k2)) cycle
+       do k2 = 1, n_j_orbitals_pn
+          if (isospin_orbitals(k1)==isospin_orbitals(k2)) cycle
           if (inp == 1) then
              n2 = k2
           else
-             n2 = k2 - n_jorb(1)
+             n2 = k2 - n_j_orbitals(1)
           end if
           do i = 1, n_morb(inp)
              if (korbn(i,inp)==k2) m2inv(morbn(i,inp)) = i
           end do
-          maxm  = (jorb(k1)+jorb(k2))/2
-          maxmd = (jorb(k1)+jorb(k2))/2
+          maxm  = (j_orbitals(k1)+j_orbitals(k2))/2
+          maxmd = (j_orbitals(k1)+j_orbitals(k2))/2
           allocate( idx_gt(ipn, n1, n2)%mp(-maxm:maxm), &
                idx_gt(ipn, n1, n2)%md(-maxmd:maxmd) )
           do mm = -maxm, maxm
-             ns = min(maxm-abs(mm)+1, jorb(k1)+1, jorb(k2)+1)
+             ns = min(maxm-abs(mm)+1, j_orbitals(k1)+1, j_orbitals(k2)+1)
              allocate( idx_gt(ipn, n1, n2)%mp(mm)%idx(2, ns) )
              n = 0
-             do m1 = -jorb(k1), jorb(k1), 2
+             do m1 = -j_orbitals(k1), j_orbitals(k1), 2
                 m2 = mm*2 - m1
-                if (abs(m2)>jorb(k2)) cycle
+                if (abs(m2)>j_orbitals(k2)) cycle
                 n = n + 1
 !                idx_gt(ipn, n1, n2)%mp(mm)%idx(:,n) & 
 !                     = (/ m1inv(m1), m2inv(m2) /)
@@ -934,12 +934,12 @@ contains
              if (n/=ns) stop "error idx_gt mm"
           end do
           do mm = -maxmd, maxmd
-             ns = min(maxmd-abs(mm)+1, jorb(k1)+1, jorb(k2)+1)
+             ns = min(maxmd-abs(mm)+1, j_orbitals(k1)+1, j_orbitals(k2)+1)
              allocate( idx_gt(ipn, n1, n2)%md(mm)%idx(2,ns) )
              n = 0
-             do m1 = -jorb(k1), jorb(k1), 2
+             do m1 = -j_orbitals(k1), j_orbitals(k1), 2
                 m2 = m1 - mm*2
-                if (abs(m2)>jorb(k2)) cycle
+                if (abs(m2)>j_orbitals(k2)) cycle
                 n = n + 1
                 idx_gt(ipn, n1, n2)%md(mm)%idx(1,n) = m1inv(m1)
                 idx_gt(ipn, n1, n2)%md(mm)%idx(2,n) = m2inv(m2)
@@ -1053,7 +1053,7 @@ contains
     op%irank = oa%irank
     op%ipr1_type = oa%ipr1_type
 
-    nj = maxval(n_jorb)
+    nj = maxval(n_j_orbitals)
     allocate( op%nocc1b(2, nj, nj) )
     do n2 = 1, nj
        do n1 = 1, nj
@@ -1101,24 +1101,24 @@ contains
     op%ipr1_type = iprty
     op%is_j_square = .false.
     if (.not. allocated(idx_nocc2b)) call init_operator_mscheme()
-    nj = maxval(n_jorb)
+    nj = maxval(n_j_orbitals)
 
 
     ! -------------- 1-body operator -----------------------
     allocate( op%nocc1b(2, nj, nj) )
 
-    do k1 = 1, n_jorb_pn
+    do k1 = 1, n_j_orbitals_pn
        n1 = k1
-       if ( n1 > n_jorb(1) ) n1 = n1 - n_jorb(1)
+       if ( n1 > n_j_orbitals(1) ) n1 = n1 - n_j_orbitals(1)
        ipn = 1
-       if (itorb(k1) == 1) ipn = 2
-       do k2 = 1, n_jorb_pn
-          if (itorb(k1) /= itorb(k2)) cycle
-          if (iporb(k1)*iporb(k2) /= iprty) cycle
+       if (isospin_orbitals(k1) == 1) ipn = 2
+       do k2 = 1, n_j_orbitals_pn
+          if (isospin_orbitals(k1) /= isospin_orbitals(k2)) cycle
+          if (parity_orbitals(k1)*parity_orbitals(k2) /= iprty) cycle
 
           n2 = k2
-          if ( n2 > n_jorb(1) ) n2 = n2 - n_jorb(1)
-          j2 = jorb(k2)
+          if ( n2 > n_j_orbitals(1) ) n2 = n2 - n_j_orbitals(1)
+          j2 = j_orbitals(k2)
           noc1 => idx_nocc2b(ipn, n1, n2)
           if ( .not. allocated(noc1%md) ) cycle
           mm1 = lbound(noc1%md, 1) 
@@ -1137,14 +1137,14 @@ contains
     allocate( op%nocc2b(3, nj, nj, nj, nj) )
     ! p-p TBME in pairing combination
     ipn = 1
-    do n1 = 1, n_jorb(ipn)
-       do n2 = n1, n_jorb(ipn)
+    do n1 = 1, n_j_orbitals(ipn)
+       do n2 = n1, n_j_orbitals(ipn)
           if (.not. allocated(idx_nocc2b(ipn,n1,n2)%mp)) cycle
 
-          do n3 = 1, n_jorb(ipn)
-             do n4 = n3, n_jorb(ipn)
+          do n3 = 1, n_j_orbitals(ipn)
+             do n4 = n3, n_j_orbitals(ipn)
                 if (.not. allocated(idx_nocc2b(ipn,n3,n4)%mp)) cycle
-                if (iporb(n1)*iporb(n2)*iporb(n3)*iporb(n4) /= iprty) cycle
+                if (parity_orbitals(n1)*parity_orbitals(n2)*parity_orbitals(n3)*parity_orbitals(n4) /= iprty) cycle
                 mm1 = max( lbound(idx_nocc2b(ipn,n1,n2)%mp,1), &
                      mu  + lbound(idx_nocc2b(ipn,n3,n4)%mp,1) )
                 mm2 = min( ubound(idx_nocc2b(ipn,n1,n2)%mp,1), &
@@ -1165,19 +1165,19 @@ contains
 
     !  n-n TBME in pairing combination 
     ipn = 2
-    do n12 = 1, n_jorb(ipn) * n_jorb(ipn)
-       n1 = (n12 - 1) / n_jorb(2) + 1
-       n2 = mod(n12 - 1, n_jorb(2)) + 1 
+    do n12 = 1, n_j_orbitals(ipn) * n_j_orbitals(ipn)
+       n1 = (n12 - 1) / n_j_orbitals(2) + 1
+       n2 = mod(n12 - 1, n_j_orbitals(2)) + 1 
        if (n1 > n2) cycle
-       k1 = n1 + n_jorb(1)
-       k2 = n2 + n_jorb(1)
+       k1 = n1 + n_j_orbitals(1)
+       k2 = n2 + n_j_orbitals(1)
        if (.not. allocated(idx_nocc2b(ipn,n1,n2)%mp)) cycle
-       do k3 = n_jorb(1)+1, n_jorb_pn
-          n3 = k3 - n_jorb(1)
-          do k4 = k3, n_jorb_pn
-             n4 = k4 - n_jorb(1)
+       do k3 = n_j_orbitals(1)+1, n_j_orbitals_pn
+          n3 = k3 - n_j_orbitals(1)
+          do k4 = k3, n_j_orbitals_pn
+             n4 = k4 - n_j_orbitals(1)
              if (.not. allocated(idx_nocc2b(ipn,n3,n4)%mp)) cycle
-             if (iporb(k1)*iporb(k2)*iporb(k3)*iporb(k4) /= iprty) cycle
+             if (parity_orbitals(k1)*parity_orbitals(k2)*parity_orbitals(k3)*parity_orbitals(k4) /= iprty) cycle
              mm1 = max( lbound(idx_nocc2b(ipn,n1,n2)%mp,1), &
                   mu  + lbound(idx_nocc2b(ipn,n3,n4)%mp,1) )
              mm2 = min( ubound(idx_nocc2b(ipn,n1,n2)%mp,1), &
@@ -1196,19 +1196,19 @@ contains
 
     !  p-n TBME in density combination
     ipn = 3
-    do k1 = 1, n_jorb(1)
+    do k1 = 1, n_j_orbitals(1)
        n1 = k1
-       do k3 = 1, n_jorb(1)
+       do k3 = 1, n_j_orbitals(1)
           n3 = k3
           if (.not. allocated(idx_nocc2b( 1,n1,n3)%md)) cycle
 
-          do k2 = n_jorb(1)+1, n_jorb_pn
-             n2 = k2 - n_jorb(1)
-             do k4 = n_jorb(1)+1, n_jorb_pn
-                n4 = k4 - n_jorb(1)
+          do k2 = n_j_orbitals(1)+1, n_j_orbitals_pn
+             n2 = k2 - n_j_orbitals(1)
+             do k4 = n_j_orbitals(1)+1, n_j_orbitals_pn
+                n4 = k4 - n_j_orbitals(1)
                 if (.not. allocated(idx_nocc2b( 2,n2,n4)%md)) cycle
 
-                if (iporb(k1)*iporb(k2)*iporb(k3)*iporb(k4) /= iprty) cycle
+                if (parity_orbitals(k1)*parity_orbitals(k2)*parity_orbitals(k3)*parity_orbitals(k4) /= iprty) cycle
 
 
                 mm1 = max( lbound(idx_nocc2b( 1,n1,n3)%md,1), &
@@ -1242,7 +1242,7 @@ contains
     integer :: k1, k2, k3, k4, j1, j2, j3, j4, mm1, mm2
     integer :: n, n1, n2, n3, n4, n12, k13, mm, nj
 
-    nj = maxval(n_jorb)
+    nj = maxval(n_j_orbitals)
 
     !$omp parallel do private(n1, n2, ipn, mm) schedule(dynamic)
     do n2 = 1, nj
@@ -1303,7 +1303,7 @@ contains
     if (op%nbody /= 5) stop 'ERROR in get_cpld_tbtd'
     if (abs(op%mm) > jj) return
 
-    nj = n_jorb(1)
+    nj = n_j_orbitals(1)
     if      (k1 <= nj .and. k2 <= nj .and. k3 <= nj .and. k4 <= nj) then
        ipn = 1
     else if (k1 >  nj .and. k2 >  nj .and. k3 >  nj .and. k4 >  nj) then
@@ -1335,8 +1335,8 @@ contains
           do ij = 1,  size(idx_nocc2b(ipn, n1, n2)%mp(mm)%idx, 2)
              i = idx_nocc2b(ipn, n1, n2)%mp(mm)%idx(1,ij)
              j = idx_nocc2b(ipn, n1, n2)%mp(mm)%idx(2,ij)
-             j1 = jorb(k1)
-             j2 = jorb(k2)
+             j1 = j_orbitals(k1)
+             j2 = j_orbitals(k2)
              m1 = morbn(i, ipn)
              m2 = morbn(j, ipn)
              if (abs(m1+m2) > 2*j12) cycle
@@ -1344,8 +1344,8 @@ contains
              do kl = 1,  size(idx_nocc2b(ipn, n3, n4)%mp(mm-mu)%idx, 2)
                 k = idx_nocc2b(ipn, n3, n4)%mp(mm-mu)%idx(1,kl)
                 l = idx_nocc2b(ipn, n3, n4)%mp(mm-mu)%idx(2,kl)
-                j3 = jorb(k3)
-                j4 = jorb(k4)
+                j3 = j_orbitals(k3)
+                j4 = j_orbitals(k4)
                 m3 = morbn(k, ipn)
                 m4 = morbn(l, ipn)
                 if (abs(m3+m4) > 2*j34) cycle
@@ -1371,15 +1371,15 @@ contains
           do ik = 1, size(idx_nocc2b(1, n1, n3)%md(mm)%idx, 2)
              i = idx_nocc2b(1, n1, n3)%md(mm)%idx(1, ik)
              k = idx_nocc2b(1, n1, n3)%md(mm)%idx(2, ik)
-             j1 = jorb(k1)
-             j3 = jorb(k3)
+             j1 = j_orbitals(k1)
+             j3 = j_orbitals(k3)
              m1 = morbn(i, 1)
              m3 = morbn(k, 1)
              do jl = 1,  size(idx_nocc2b(2, n2, n4)%md(mu-mm)%idx, 2)
                 j = idx_nocc2b(2, n2, n4)%md(mu-mm)%idx(1, jl)
                 l = idx_nocc2b(2, n2, n4)%md(mu-mm)%idx(2, jl)
-                j2 = jorb(k2)
-                j4 = jorb(k4)
+                j2 = j_orbitals(k2)
+                j4 = j_orbitals(k4)
                 m2 = morbn(j, 2)
                 m4 = morbn(l, 2)
                 if (abs(m1+m2) > 2*j12) cycle
@@ -1423,7 +1423,7 @@ contains
     if (op%nbody /= 5 .and. op%nbody /= 11 ) stop 'ERROR in get_cpld_tbtd'
     if (op%nbody == 5 .and. abs(op%mm) > jj) return
 
-    nj = n_jorb(1)
+    nj = n_j_orbitals(1)
     if      (k1 <= nj .and. k2 <= nj) then 
        ipn = 1
        n1 = k1
@@ -1451,8 +1451,8 @@ contains
 
           i = idx_p(1, n1)%md(md   )%idx(1, 1)
           j = idx_p(2, n2)%md(md-mu)%idx(1, 1)
-          j1 = jorb(k1)
-          j2 = jorb(k2)
+          j1 = j_orbitals(k1)
+          j2 = j_orbitals(k2)
           m1 = morbn(i, 1)
           m2 = morbn(j, 2)
           if (abs(m1-m2) > 2*jj) cycle
@@ -1472,8 +1472,8 @@ contains
     do ij = 1,  size(idx_nocc2b(ipn, n1, n2)%md(mu)%idx, 2)
        i = idx_nocc2b(ipn, n1, n2)%md(mu)%idx(1, ij)
        j = idx_nocc2b(ipn, n1, n2)%md(mu)%idx(2, ij)
-       j1 = jorb(k1)
-       j2 = jorb(k2)
+       j1 = j_orbitals(k1)
+       j2 = j_orbitals(k2)
        m1 = morbn(i, ipn)
        m2 = morbn(j, ipn)
 
@@ -1500,22 +1500,22 @@ contains
     type(jz_2b_idx), pointer :: noc1
 
     call init_op_m_gt()
-    nj = n_jorb_pn
+    nj = n_j_orbitals_pn
     allocate( op%nocc1b(2, nj, nj) )
     op%mm = mm
     op%ipr1_type = iprty
     op%nbody = 10
 
-    do k1 = 1, n_jorb_pn
+    do k1 = 1, n_j_orbitals_pn
        n1 = k1
-       if ( n1 > n_jorb(1) ) n1 = n1 - n_jorb(1)
+       if ( n1 > n_j_orbitals(1) ) n1 = n1 - n_j_orbitals(1)
        ipn = 1
-       if (itorb(k1) == 1) ipn = 2
-       do k2 = 1, n_jorb_pn
-          if (itorb(k1)==itorb(k2)) cycle
+       if (isospin_orbitals(k1) == 1) ipn = 2
+       do k2 = 1, n_j_orbitals_pn
+          if (isospin_orbitals(k1)==isospin_orbitals(k2)) cycle
           n2 = k2
-          if ( n2 > n_jorb(1) ) n2 = n2 - n_jorb(1)
-          if (iporb(k1)*iporb(k2) /= iprty) cycle
+          if ( n2 > n_j_orbitals(1) ) n2 = n2 - n_j_orbitals(1)
+          if (parity_orbitals(k1)*parity_orbitals(k2) /= iprty) cycle
           noc1 => idx_gt(ipn, n1, n2)
 
           if ( .not. allocated(noc1%md) ) cycle
@@ -1540,8 +1540,8 @@ contains
     integer :: n1, n2, ipn, m
 
     !$omp parallel do private(n1, n2, ipn, m )
-    do n2 = 1, n_jorb_pn
-       do n1 = 1, n_jorb_pn
+    do n2 = 1, n_j_orbitals_pn
+       do n1 = 1, n_j_orbitals_pn
           do ipn = 1, 2
              if (.not. allocated( op%nocc1b(ipn,n1,n2)%m )) cycle
              do m = lbound(op%nocc1b(ipn,n1,n2)%m, 1), &
@@ -1563,7 +1563,7 @@ contains
     integer :: ipn, m, n1, n2, n3, n4, nj
 
     if (myrank /= 0) return
-    nj = maxval(n_jorb)
+    nj = maxval(n_j_orbitals)
     write(*,'(/,a,/)') '### m-scheme matrix elements ###'
     write(*,*) '### one-body matrix elements ###'
     do ipn = 1, 2

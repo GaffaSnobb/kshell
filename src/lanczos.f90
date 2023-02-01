@@ -24,7 +24,7 @@ module lanczos
 contains
     recursive subroutine lanczos_main(&
         matvec, dotprod, ndim, eval, evec, matvec_jj, eval_jj, is_inner, &
-        is_load_snapshot, n_eig, tol, maxiter, n_restart_vec, max_lanc_vec, &
+        is_load_snapshot, n_eig, lanc_convergence_tol, maxiter, n_restart_vec, max_lanc_vec, &
         mode_lv_hdd)
     !
     ! Thick-restart Lanczos diagonalization in real(kwf)
@@ -41,7 +41,7 @@ contains
     !     opt.  eval_jj ... expected jj for double_lanczos ( = M*(M+1) )
     !           n_eig : # of lowest eigenvalues    
     !                       (default: min(size(evec,2), size(eval))
-    !           tol : tolerance of eigenvalues     (default: 1.d-5)
+    !           lanc_convergence_tol : tolerance of eigenvalues     (default: 1.d-5)
     !           maxiter : max. # of iterations of thick-restart  (default: 10)
     !           n_restart_vec : # of vectors at restart  (default: 1)
     !           max_lanc_vec  : max of lanczos vector  (default: 100)
@@ -85,7 +85,7 @@ contains
     integer(kdim), intent(in) :: ndim
     integer, intent(in), optional :: n_eig, maxiter, n_restart_vec, &
         max_lanc_vec, mode_lv_hdd
-    real(8), intent(in), optional :: tol, eval_jj
+    real(8), intent(in), optional :: lanc_convergence_tol, eval_jj
     logical, intent(in), optional :: is_inner, is_load_snapshot
     integer :: neig, miter, iv, itr, n_itr, i, j, n, n_iv, n_res_vec, max_lv, &
         n_iv_start, itr_a, mod_lv_hdd
@@ -102,7 +102,7 @@ contains
     if (present(n_eig)) neig = n_eig
     tl = 1.d-6 ! 1.d-5
     ! if (kwf==8) tl = 1.d-7
-    if (present(tol)) tl = tol
+    if (present(lanc_convergence_tol)) tl = lanc_convergence_tol
     miter = 10
     if (present(maxiter)) miter = maxiter
     mod_lv_hdd = 0
@@ -336,7 +336,7 @@ contains
            n_restart_vec=1, max_lanc_vec=max_lanc_vec, &
            maxiter=10, &
            ! maxiter=max(20,miter), &
-           tol=tol_jj, mode_lv_hdd=mode_lv_hdd)
+           lanc_convergence_tol=tol_jj, mode_lv_hdd=mode_lv_hdd)
       v%p => evec_jj_tmp(1)%p
       eval_jj_out = eval_jj_tmp(1)
     end subroutine jj_refine

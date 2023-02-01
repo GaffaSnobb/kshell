@@ -37,12 +37,12 @@ def jjp2str(jj, parity):
     return ( str(jj/2) if jj%2==0 else str(jj)+"/2" ) + "- +"[parity+1]
     
 def read_snt(
-    model_space_filename: str
+    interaction_filename: str
     ) -> Tuple[list, list, list, list, list, list]:
     """
     Parameters
     ----------
-    model_space_filename:
+    interaction_filename:
         The filename of the .snt model space file.
 
     Returns
@@ -66,7 +66,7 @@ def read_snt(
     itorb:
         ?
     """
-    fp = open(model_space_filename,'r')
+    fp = open(interaction_filename,'r')
     arr = readline_sk(fp)
     orbits_proton_neutron = [ int(arr[0]), int(arr[1]) ]
     core_protons_neutrons = [ int(arr[2]), int(arr[3]) ]
@@ -182,7 +182,7 @@ def _parallel(args):
 
 @lru_cache(maxsize=None, typed=False)
 def count_dim(
-    model_space_filename: str,
+    interaction_filename: str,
     partition_filename: str,
     print_dimensions: bool = True,
     debug: bool = False
@@ -217,7 +217,7 @@ def count_dim(
 
     Parameters
     ----------
-    model_space_filename:
+    interaction_filename:
         The filename of the .snt file which contains the model space
         information. Example 'usda.snt'.
 
@@ -234,7 +234,7 @@ def count_dim(
     timing_total = time.time()
     timing_read_snt = time.time()
     orbits_proton_neutron, core_protons_neutrons, norb, lorb, jorb, itorb = \
-        read_snt(model_space_filename)
+        read_snt(interaction_filename)
     timing_read_snt = time.time() - timing_read_snt
     
     timing_read_ptn = time.time()
@@ -363,10 +363,9 @@ def input_choice(content, content_type):
 
     return filename
         
-
 def handle_input():
     try:
-        model_space_filename, partition_filename = sys.argv[1:3]
+        interaction_filename, partition_filename = sys.argv[1:3]
     except ValueError:
         """
         Ask for input if none is given in the command line, or choose
@@ -376,10 +375,10 @@ def handle_input():
         snt_content = [elem for elem in dir_content if elem.endswith(".snt")]
         ptn_content = [elem for elem in dir_content if elem.endswith(".ptn")]
 
-        model_space_filename = input_choice(snt_content, ".snt")
+        interaction_filename = input_choice(snt_content, ".snt")
         partition_filename = input_choice(ptn_content, ".ptn")
 
-    count_dim(model_space_filename, partition_filename)
+    count_dim(interaction_filename, partition_filename)
 
 if __name__ == "__main__":
     handle_input()

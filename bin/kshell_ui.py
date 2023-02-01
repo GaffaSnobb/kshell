@@ -19,7 +19,7 @@ var_dict = {
     "hw_type"       : 1, 
     "mode_lv_hdd"   : 0, 
     "n_block"       : 0, 
-    "eff_charge"    : [1.5, 0.5] , 
+    "effective_charge"    : [1.5, 0.5] , 
     "gl"            : [1.0, 0.0], 
     "gs"            : [GS_FREE_PROTON, GS_FREE_NEUTRON],
     "beta_cm"       : 0.0, 
@@ -159,7 +159,7 @@ def split_jpn(jpn: str, valence_p_n: Tuple[int, int]) -> Tuple[int, int, int, bo
     
     return spin, parity, n_states, is_jproj
     
-def create_base_filename(valence_p_n: tuple, model_space_filename: str) -> str:
+def create_base_filename(valence_p_n: tuple, interaction_filename: str) -> str:
     """
     Take in the number of valence protons and neutrons, along with the
     model space filename and create base filename for output script.
@@ -170,7 +170,7 @@ def create_base_filename(valence_p_n: tuple, model_space_filename: str) -> str:
     valence_p_n:
         A tuple containing the number of valence protons and neutrons.
 
-    model_space_filename:
+    interaction_filename:
         Example: 'usda.snt'.
     """
     core_protons, core_neutrons = snt_parameters['ncore']
@@ -188,7 +188,7 @@ def create_base_filename(valence_p_n: tuple, model_space_filename: str) -> str:
     else:
         mass += -valence_p_n[1]
 
-    return elements[Z] + str(mass) + "_" + model_space_filename[:-4]
+    return elements[Z] + str(mass) + "_" + interaction_filename[:-4]
 
 def extract_valence_protons_and_neutrons(input_nuclide: str) -> tuple:
     """
@@ -264,7 +264,7 @@ def print_var_dict(var_dict, skip=()):
         v = var_dict[key]
         if isinstance(v, list): 
             """
-            Example: {..., "eff_charge": [1.5, 0.5], ...}
+            Example: {..., "effective_charge": [1.5, 0.5], ...}
             """
             vv = ""
             for i in v: vv += str(i) + ", "
@@ -306,7 +306,7 @@ def read_comment_skip(model_space_file: TextIO) -> List:
     Enter the recommended parameters into var_dict.
     Example from jun45.snt:
     ! default input parameters 
-    !namelist eff_charge = 1.5, 1.1
+    !namelist effective_charge = 1.5, 1.1
     !namelist gl         = 1.0, 0.0 
     !namelist gs         = 3.910, -2.678 
     !namelist orbs_ratio = 4, 8
@@ -335,10 +335,10 @@ def read_comment_skip(model_space_file: TextIO) -> List:
         if line[0] == '!namelist':
             """
             Extract recommended parameters from .snt file. For example
-            eff_charge, gl, gs, orbs_ratio. Example:
+            effective_charge, gl, gs, orbs_ratio. Example:
             
             ! default input parameters 
-            !namelist eff_charge = 1.5, 1.1
+            !namelist effective_charge = 1.5, 1.1
             !namelist gl         = 1.0, 0.0 
             !namelist gs         = 3.910, -2.678 
             !namelist orbs_ratio = 4, 8
@@ -420,7 +420,7 @@ class ExternalSyntaxError(Exception):
     """
     pass
 
-def read_snt(model_space_filename: str):
+def read_snt(interaction_filename: str):
     """
     Read model space file (.snt), extract information about orbit
     properties (occupation, angular momentum, etc.) and save in
@@ -428,15 +428,15 @@ def read_snt(model_space_filename: str):
 
     Parameters
     ----------
-    model_space_filename : str
+    interaction_filename : str
         Path to .snt file.
     """
-    infile = open(model_space_filename, 'r')
+    infile = open(interaction_filename, 'r')
     n_valence_orbitals_proton, n_valence_orbitals_neutron, n_core_protons, n_core_neutrons = \
         read_comment_skip(infile)
     norb = []   # ?
     lorb = []   # Orbital angular momentum.
-    jorb = []   # Orbital angular momentum z projection.
+    jorb = []   # Orbital angular momentum z projection. NOTE: No, no, total angular momentum, right?
     torb = []   # Orbital isospin.
     npn = [n_valence_orbitals_proton, n_valence_orbitals_neutron]  # NOTE: Not in use.
     nfmax = [0, 0]  # Max number of valence protons and neutrons.
@@ -463,7 +463,7 @@ def read_snt(model_space_filename: str):
             All valence orbitals are labeled 1 to N. Raise error if the
             numbering is not 1, 2, 3, ..., N.
             """
-            msg = f"Syntax error in {model_space_filename}. Expected {i + 1} got {arr[0]}."
+            msg = f"Syntax error in {interaction_filename}. Expected {i + 1} got {arr[0]}."
             raise ExternalSyntaxError(msg)
 
         norb.append( int(arr[1]) )
@@ -481,7 +481,7 @@ def read_snt(model_space_filename: str):
     snt_parameters['torb'] = torb          # Isospin of each orbit (proton or neutron).
     snt_parameters['nfmax'] = nfmax
     
-def check_cm_snt(model_space_filename):
+def check_cm_snt(interaction_filename):
     # return whether Lawson term is required or not
     is_cm = False
     nc = snt_parameters['ncore']
@@ -583,7 +583,7 @@ def output_transit(
     wave_filename_l, partition_filename_l = wave_partition_filename_l
     wave_filename_r, partition_filename_r = wave_partition_filename_r
 
-    eff_charge = list2str( var_dict[ "eff_charge" ] )
+    effective_charge = list2str( var_dict[ "effective_charge" ] )
     gl = list2str( var_dict[ "gl" ] )
     gs = list2str( var_dict[ "gs" ] )
 
@@ -599,13 +599,13 @@ def output_transit(
     out += 'echo "start running ' + log_filename + ' ..."\n' 
     out += 'cat > ' + input_filename + ' <<EOF\n' \
         +  '&input\n'
-    out += '  fn_int   = ' + var_dict["fn_int"] + '\n' \
+    out += '  interaction_filename   = ' + var_dict["interaction_filename"] + '\n' \
         +  '  fn_ptn_l = ' + partition_filename_l + '\n' \
         +  '  fn_ptn_r = ' + partition_filename_r + '\n' \
         +  '  fn_load_wave_l = ' + wave_filename_l + '\n' \
         +  '  fn_load_wave_r = ' + wave_filename_r + '\n' \
         +  '  hw_type = ' + str(var_dict["hw_type"]) + '\n' \
-        +  '  eff_charge = ' + eff_charge + '\n' \
+        +  '  effective_charge = ' + effective_charge + '\n' \
         +  '  gl = ' + gl + '\n' \
         +  '  gs = ' + gs + '\n' 
     if 'is_obtd' in var_dict: 
@@ -620,7 +620,7 @@ def output_transit(
     return out
 
 def main_nuclide(
-    model_space_filename: str
+    interaction_filename: str
     ) -> Tuple[str, str, Tuple[int, int], List[Tuple[int, int, int, bool]], Dict[tuple, str], List, List]:
     """
     Prompt for nuclide, number of states to calculate, truncation, and
@@ -628,7 +628,7 @@ def main_nuclide(
 
     Parameters
     ----------
-    model_space_filename:
+    interaction_filename:
         Example: 'usda.snt'.
 
     Returns
@@ -705,13 +705,13 @@ def main_nuclide(
         
         break
 
-    base_filename = create_base_filename(valence_p_n, model_space_filename)
+    base_filename = create_base_filename(valence_p_n, interaction_filename)
     while base_filename in base_filename_list:
         """
         If the same nuclide is specified several times, an 'x' is
         inserted into the script filename to differentiate between them.
         """
-        n = len(model_space_filename) - 3
+        n = len(interaction_filename) - 3
         base_filename = base_filename[:-n] + 'x' + base_filename[-n:]
 
     input_base_filename = raw_input_save("\n name for script file (default: " + base_filename + " ): ")
@@ -839,7 +839,7 @@ def main_nuclide(
         else:          
             print('\n truncation for "-" parity state in ', partition_filename)
 
-        trc_list_prty[parity] = gen_partition.main(model_space_filename, partition_filename, valence_p_n, parity)
+        trc_list_prty[parity] = gen_partition.main(interaction_filename, partition_filename, valence_p_n, parity)
 
         if os.path.exists( partition_filename ): stgin_filenames.append( partition_filename )
 
@@ -855,8 +855,8 @@ def main_nuclide(
     print(f"{parameter_info}{[i.split(' = ')[0] for i in list_param]}\n")
     
     try:
-        quenching_info = f"Recommended quenching for {model_space_filename}: "
-        quenching_info += f"{recommended_quenching_factors[model_space_filename]}\n"
+        quenching_info = f"Recommended quenching for {interaction_filename}: "
+        quenching_info += f"{recommended_quenching_factors[interaction_filename]}\n"
         print(quenching_info)
     except KeyError:
         """
@@ -879,7 +879,7 @@ def main_nuclide(
         print(print_var_dict(
             var_dict,
             skip = (    # NOTE: 'fn_ptn' and 'partition_filename' mixup.
-                'fn_int', 'fn_save_wave', 'n_eigen', 'fn_ptn', 'is_double_j',
+                'interaction_filename', 'save_wave_filename', 'n_eigen', 'partition_filename', 'is_double_j',
                 'mtot'
             )
         ))
@@ -963,7 +963,7 @@ def main_nuclide(
             jchar =  '_m'
             var_dict[ 'is_double_j' ] = '.false.'
         
-        var_dict[ 'fn_ptn' ] = '"' + fn_ptn_list[parity] + '"' # NOTE: 'fn_ptn' and 'partition_filename' mixup.
+        var_dict[ 'partition_filename' ] = '"' + fn_ptn_list[parity] + '"' # NOTE: 'fn_ptn' and 'partition_filename' mixup.
 
         if (trc_list_prty[parity] is not None) and (not 'orbs_ratio' in var_dict.keys()):
             var_dict[ 'orbs_ratio' ] = trc_list_prty[parity]
@@ -976,9 +976,9 @@ def main_nuclide(
         log_filename = \
             f"log_{base_filename}{jchar}{str(spin)}{parity_to_string(parity)}.txt"
         stgout_filenames.append( log_filename )
-        var_dict[ 'fn_save_wave' ] = wave_filename
+        var_dict[ 'save_wave_filename' ] = wave_filename
         fn_save_dict[ (spin, parity, n_states, is_jproj) ] \
-            = wave_filename, var_dict[ 'fn_ptn' ]    # NOTE: 'fn_ptn' and 'partition_filename' mixup.
+            = wave_filename, var_dict[ 'partition_filename' ]    # NOTE: 'fn_ptn' and 'partition_filename' mixup.
         var_dict[ 'n_eigen' ] = n_states
         var_dict[ 'n_restart_vec' ] = max(
             int(n_states * 1.5),
@@ -995,7 +995,7 @@ def main_nuclide(
         kshell_job_name = f"{str(spin)}{parity_to_string(parity)}"
 
         if 'no_save' in var_dict.keys():
-            del var_dict[ 'fn_save_wave' ]
+            del var_dict[ 'save_wave_filename' ]
 
         # shell_file_content_single += 'echo "start running ' + log_filename + ' ..."\n'
         # shell_file_content_single += 'cat > ' + input_filename + ' <<EOF\n' +  '&input\n'
@@ -1146,7 +1146,7 @@ def ask_yn(optype):
 
 def check_j_scheme_dimensionality(
     states: List,
-    model_space_filename: str,
+    interaction_filename: str,
     shell_file_content_total: str
     ):
     """
@@ -1174,7 +1174,7 @@ def check_j_scheme_dimensionality(
         partition_filename = state[6][1].replace('"', '')
         wave_filename = state[6][0].replace('"', '')
         M, _, jdim = count_dim(
-            model_space_filename = model_space_filename,
+            interaction_filename = interaction_filename,
             partition_filename = partition_filename,
             print_dimensions = False
         )
@@ -1661,36 +1661,36 @@ def main():
         """
         model_space_msg = "\n model space and interaction file name (.snt) \n"
         model_space_msg += " (e.g. w or w.snt,  TAB to complete) : "
-        model_space_filename = raw_input_save(model_space_msg)
-        model_space_filename = model_space_filename.rstrip()
+        interaction_filename = raw_input_save(model_space_msg)
+        interaction_filename = interaction_filename.rstrip()
         
-        if model_space_filename[-4:] != '.snt': model_space_filename = model_space_filename + '.snt'
-        if os.path.isfile(model_space_filename):
+        if interaction_filename[-4:] != '.snt': interaction_filename = interaction_filename + '.snt'
+        if os.path.isfile(interaction_filename):
             """
             Check if model space is defined.
             """
             break
-        elif os.path.isfile(bindir + "/../snt/" + model_space_filename):
+        elif os.path.isfile(bindir + "/../snt/" + interaction_filename):
             """
             Check if model space is defined.
             """
-            shutil.copy(bindir + "/../snt/" + model_space_filename, ".")
+            shutil.copy(bindir + "/../snt/" + interaction_filename, ".")
             break
         
         print("\n *** Invalid: .snt file NOT found  ***")
         
     readline.parse_and_bind("tab: None")
-    stgin_filenames.append(model_space_filename)
-    read_snt(model_space_filename)
+    stgin_filenames.append(interaction_filename)
+    read_snt(interaction_filename)
 
-    var_dict[ 'fn_int' ] =  '"' + model_space_filename + '"'
-    if (var_dict[ 'beta_cm' ] == 0.0) and check_cm_snt(model_space_filename): 
+    var_dict[ 'interaction_filename' ] =  '"' + interaction_filename + '"'
+    if (var_dict[ 'beta_cm' ] == 0.0) and check_cm_snt(interaction_filename): 
         var_dict[ 'beta_cm' ] = 10.0
     if is_mpi: var_dict['mode_lv_hdd'] = 0
     if snt_parameters['ncore'] == (8,8): var_dict['hw_type'] = 2
 
     shell_filename = ''
-    fn_snt_base = model_space_filename[:-4]
+    fn_snt_base = interaction_filename[:-4]
     shell_file_content_total = ''
 
     """
@@ -1708,7 +1708,7 @@ def main():
         """
         base_filename, shell_file_content_single, valence_p_n, list_jpn, \
         fn_save_dict, kshell_tmp, transit_tmp = \
-            main_nuclide(model_space_filename)
+            main_nuclide(interaction_filename)
 
         if not shell_file_content_single:
             """
@@ -1871,7 +1871,7 @@ def main():
     shell_file_content_total = \
         check_j_scheme_dimensionality(
             states,
-            model_space_filename,
+            interaction_filename,
             shell_file_content_total
         )
 

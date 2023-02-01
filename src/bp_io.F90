@@ -8,7 +8,7 @@ module bp_io
   use class_stopwatch
   use rotation_group, only: dcg
   use model_space, only: m_mass=>mass, allocate_l_vec, deallocate_l_vec, &
-       print_max_l_vec, myrank, nprocs, sum_rule, deallocate_l_vec, jorbn
+       print_max_l_vec, myrank, nprocs, sum_rule, deallocate_l_vec, j_orbitalsn
   use partition, only: init_partition, copy_partition, deploy_partition, &
        type_ptn_pn, finalize_partition, c_prty
   use operator_mscheme, only: opr_m
@@ -28,8 +28,8 @@ module bp_io
 contains
 
 
-  subroutine bp_save_wf(fn_save_wave, evec, ptn)
-    character(len=maxchar),intent(in) :: fn_save_wave
+  subroutine bp_save_wf(save_wave_filename, evec, ptn)
+    character(len=maxchar),intent(in) :: save_wave_filename
     type(type_vec_p), intent(inout) :: evec(:)
     type(type_ptn_pn), intent(in) :: ptn
     type(type_ptn_pn) :: ptn_srt
@@ -40,7 +40,7 @@ contains
 
     call init_bridge_partitions(bp_srt, ptn_srt, ptn)
   
-    call bp_save_wf_srt(bp_srt, fn_save_wave, evec)
+    call bp_save_wf_srt(bp_srt, save_wave_filename, evec)
 
     call finalize_bridge_partitions(bp_srt)
     call finalize_partition(ptn_srt)
@@ -147,9 +147,9 @@ contains
 
           iirank = op_init_wf%irank*2
           if (op_init_wf%nbody == -1 .or. op_init_wf%nbody == -2) &
-               iirank = jorbn( op_init_wf%crt_orb, -op_init_wf%nbody)
+               iirank = j_orbitalsn( op_init_wf%crt_orb, -op_init_wf%nbody)
           if (op_init_wf%nbody == -6 .or. op_init_wf%nbody == -7) &
-               iirank = jorbn( op_init_wf%crt_orb, -5-op_init_wf%nbody)
+               iirank = j_orbitalsn( op_init_wf%crt_orb, -5-op_init_wf%nbody)
           
           if (iirank /= 0 .and. jtot_i > 0 ) then
              call j_proj( ptn, evec(i), evec(i)%jj, &
@@ -199,9 +199,9 @@ contains
 
        iirank = op_init_wf%irank*2
        if (op_init_wf%nbody == -1 .or. op_init_wf%nbody == -2) &
-            iirank = jorbn( op_init_wf%crt_orb, -op_init_wf%nbody)
+            iirank = j_orbitalsn( op_init_wf%crt_orb, -op_init_wf%nbody)
        if (op_init_wf%nbody == -6 .or. op_init_wf%nbody == -7) &
-            iirank = jorbn( op_init_wf%crt_orb, -5-op_init_wf%nbody)
+            iirank = j_orbitalsn( op_init_wf%crt_orb, -5-op_init_wf%nbody)
 
        x = dcg(evec(i)%jj, mtot, iirank, mtot_i-mtot, &
             jtot_i, mtot_i)

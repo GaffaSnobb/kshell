@@ -48,7 +48,7 @@ contains
     type(opr_j) :: jtensor_j, ltensor_j, stensor_j, r2y2_j, r1y1_j, &
          r3y3_j, hcm_j, j_square_j, t_square_j
     !
-    call init_rotation_group(maxval(jorb))
+    call init_rotation_group(maxval(j_orbitals))
     !
     call read_intfile(lun, hamltn_j)
     call non_diag_ob_2_tbme(hamltn_j)
@@ -144,8 +144,8 @@ contains
     real(8) :: r
     r = 0.d0
     if (n1/=n2 .or. l1/=l2 .or. j1/=j2 .or. t1/=t2) return
-    if (n1/=norb(n_num_orb) .or. l1/=lorb(n_num_orb) &
-         & .or. j1/=jorb(n_num_orb) .or. t1/=itorb(n_num_orb)) return
+    if (n1/=n_orbitals(n_num_orb) .or. l1/=l_orbitals(n_num_orb) &
+         & .or. j1/=j_orbitals(n_num_orb) .or. t1/=isospin_orbitals(n_num_orb)) return
     r = sqrt(dble(j1 + 1))
   end function num_orb_func1
 
@@ -469,22 +469,22 @@ contains
     integer :: iprty, nbody
     type(opr_j) :: oj
     
-    iprty = iporb(ii)*iporb(ij)
-    if (     jorb(ii)+jorb(ij)  < 2*irank  .or. &
-         abs(jorb(ii)-jorb(ij)) > 2*irank ) stop 'rank failed in set_ob_ij'
+    iprty = parity_orbitals(ii)*parity_orbitals(ij)
+    if (     j_orbitals(ii)+j_orbitals(ij)  < 2*irank  .or. &
+         abs(j_orbitals(ii)-j_orbitals(ij)) > 2*irank ) stop 'rank failed in set_ob_ij'
 
-    if (     itorb(ii) == itorb(ij) ) then 
+    if (     isospin_orbitals(ii) == isospin_orbitals(ij) ) then 
        nbody =   1
-    else if (itorb(ii) == -1 .and. itorb(ij) ==  1 ) then 
+    else if (isospin_orbitals(ii) == -1 .and. isospin_orbitals(ij) ==  1 ) then 
        nbody = -10
-    else if (itorb(ii) ==  1 .and. itorb(ij) == -1 ) then 
+    else if (isospin_orbitals(ii) ==  1 .and. isospin_orbitals(ij) == -1 ) then 
        nbody = -11
     else
        stop 'ERROR: set_ob_ij'
     end if
 
-    nljt_sc(:,1) =  (/ norb(ii), lorb(ii), jorb(ii), itorb(ii) /)
-    nljt_sc(:,2) =  (/ norb(ij), lorb(ij), jorb(ij), itorb(ij) /)
+    nljt_sc(:,1) =  (/ n_orbitals(ii), l_orbitals(ii), j_orbitals(ii), isospin_orbitals(ii) /)
+    nljt_sc(:,2) =  (/ n_orbitals(ij), l_orbitals(ij), j_orbitals(ij), isospin_orbitals(ij) /)
 
     call set_opr_j(oj, single_channel_func1, &
          irank=irank, ipr1_type=iprty, nbody=nbody)
@@ -504,24 +504,24 @@ contains
     
     do iloop = 1, 2
        iop = 0
-       do i = 1, n_jorb_pn
+       do i = 1, n_j_orbitals_pn
           if (present(iorbl)) then
              if (i/=iorbl) cycle
           end if
-          nljt_sc(:,1) =  (/ norb(i), lorb(i), jorb(i), itorb(i) /)
-          do j = 1, n_jorb_pn
+          nljt_sc(:,1) =  (/ n_orbitals(i), l_orbitals(i), j_orbitals(i), isospin_orbitals(i) /)
+          do j = 1, n_j_orbitals_pn
              if (present(iorbr)) then
                 if ( j /= iorbr ) cycle
              end if
-             if ( iporb(i)*iporb(j) /= iprty ) cycle
-             if (     jorb(i)+jorb(j)  < 2*irank  .or. &
-                  abs(jorb(i)-jorb(j)) > 2*irank ) cycle
+             if ( parity_orbitals(i)*parity_orbitals(j) /= iprty ) cycle
+             if (     j_orbitals(i)+j_orbitals(j)  < 2*irank  .or. &
+                  abs(j_orbitals(i)-j_orbitals(j)) > 2*irank ) cycle
              if ( nbody == 1 ) then
-                if ( itorb(i) /= itorb(j) ) cycle
+                if ( isospin_orbitals(i) /= isospin_orbitals(j) ) cycle
              else if ( nbody == -10 ) then
-                if ( itorb(i) /= -1 .or. itorb(j) /=  1 ) cycle
+                if ( isospin_orbitals(i) /= -1 .or. isospin_orbitals(j) /=  1 ) cycle
              else if (  nbody == -11) then
-                if ( itorb(i) /=  1 .or. itorb(j) /= -1 ) cycle
+                if ( isospin_orbitals(i) /=  1 .or. isospin_orbitals(j) /= -1 ) cycle
              else
                 stop 'ERROR: set_ob_channel'
              end if
@@ -529,7 +529,7 @@ contains
              iop = iop + 1
 
              if (iloop==2) then
-                nljt_sc(:,2) = (/ norb(j), lorb(j), jorb(j), itorb(j) /)
+                nljt_sc(:,2) = (/ n_orbitals(j), l_orbitals(j), j_orbitals(j), isospin_orbitals(j) /)
                 ij_orb(:,iop) = (/ i, j /)
                 call set_opr_j(oj, single_channel_func1, &
                      irank=irank, ipr1_type=iprty, nbody=nbody)
