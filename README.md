@@ -1456,7 +1456,7 @@ Chosen states: ['0+10', '1+10', '2+10', '3+10']
   <summary>Compare data from different KSHELL runs</summary>
   <p>
 
-It might be very useful to compare data from different KSHELL calculations. Maybe you want to compare the energy levels of $^{50}$V and $^{51}$V? We've got your back! Note that the `ksutil.latex_plot()` call is optional since it works only to make the plot prettier. If you want to use the exact same data as the example code, you can find it here: [50V](https://github.com/GaffaSnobb/master-tasks/tree/main/V50/sdpf-mu/200_levels/1hw), [51V](https://github.com/GaffaSnobb/master-tasks/tree/main/V51/sdpf-mu/200_levels)
+  It might be very useful to compare data from different KSHELL calculations. Maybe you want to compare the energy levels of $^{50}$V and $^{51}$V? We've got your back! Note that the `ksutil.latex_plot()` call is optional since it works only to make the plot prettier. If you want to use the exact same data as the example code, you can find it here: [50V](https://github.com/GaffaSnobb/master-tasks/tree/main/V50/sdpf-mu/200_levels/1hw), [51V](https://github.com/GaffaSnobb/master-tasks/tree/main/V51/sdpf-mu/200_levels)
 
 ```python
 import kshell_utilities as ksutil
