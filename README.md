@@ -1451,65 +1451,6 @@ Chosen states: ['0+10', '1+10', '2+10', '3+10']
   </details>
   
   <!-- #### KSHELL file descriptions -->
-    
-  <details>
-  <summary>Compare data from different KSHELL runs</summary>
-  <p>
-
-  It might be very useful to compare data from different KSHELL calculations. Maybe you want to compare the energy levels of $^{50}$V and $^{51}$V? We've got your back! Note that the `ksutil.latex_plot()` call is optional since it works only to make the plot prettier. If you want to use the exact same data as the example code, you can find it here: [50V](https://github.com/GaffaSnobb/master-tasks/tree/main/V50/sdpf-mu/200_levels/1hw), [51V](https://github.com/GaffaSnobb/master-tasks/tree/main/V51/sdpf-mu/200_levels)
-
-```python
-import kshell_utilities as ksutil
-ksutil.latex_plot()
-
-def main():
-    V50 = ksutil.loadtxt("summary_V50_sdpf-mu_000.txt")
-    V51 = ksutil.loadtxt("summary_V51_sdpf-mu_000.txt")
-
-    comp = ksutil.Compare(kshell_outputs=[V50, V51])
-    comp.plot_levels()
-
-if __name__ == "__main__":
-    main()
-```
-    
-  <details>
-  <summary>Click to see the level comparison plot produced by the above code</summary>
-  <p>
-
-  ![level_comparison_plot](https://github.com/GaffaSnobb/kshell-utilities/blob/main/doc/level_comparison_plot.png)
-
-  </p>
-  </details>
-    
-  Note that $^{50,51}$V are of integer and half integer angular momentum respectively, meaning that their levels will be in separate columns. If we however swap $^{51}$V with $^{44}$Sc ([data here](https://github.com/GaffaSnobb/master-tasks/tree/main/Sc44/sdpf-sdg/200_levels/3hw)) then the two nuclei both have integer angular momentum and the levels are plotted in the same column. And by the way, you can adjust the number of levels per $j^{\pi}$ with the `include_n_levels` argument:
-    
-```python
-import kshell_utilities as ksutil
-ksutil.latex_plot()
-
-def main():
-    Sc44 = ksutil.loadtxt("summary_Sc44_GCLSTsdpfsdgix5pn_000.txt")
-    V50 = ksutil.loadtxt("summary_V50_sdpf-mu_000.txt")
-
-    comp = ksutil.Compare(kshell_outputs=[V50, Sc44])
-    comp.plot_levels(include_n_levels=50)
-
-if __name__ == "__main__":
-    main()
-```
-    
-  <details>
-  <summary>Click to see the level comparison plot produced by the above code</summary>
-  <p>
-
-  ![level_comparison_plot_V50_Sc44](https://github.com/GaffaSnobb/kshell-utilities/blob/main/doc/level_comparison_plot_V50_Sc44.png)
-
-  </p>
-  </details>
-    
-  </p>
-  </details>
 
   <details>
   <summary>KSHELL file descriptions</summary>
