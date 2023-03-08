@@ -55,7 +55,8 @@ Code downloaded from https://sites.google.com/alumni.tsukuba.ac.jp/kshell-nuclea
 </details>
 
 ## Usage
-
+  
+  ### All usage instructions will be / have been moved to the Wiki on this repository! Please see the Wiki for detailed instructions.
   <!-- #### How to use the output from KSHELL -->
 
   <details>
