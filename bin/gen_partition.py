@@ -107,12 +107,12 @@ class ModelSpace:
             [-1, -1, -1, 1, 1, 1]. -1 corresponds to protons, while 1
             corresponds to neutrons.
         """
-        self.valence_p_n: tuple = valence_p_n
-        self.norb: list = norb
-        self.lorb: list = lorb
-        self.jorb: list = jorb
-        self.itorb: list = itorb
-        self.parityorb = [(-1)**l for l in lorb]
+        self.valence_p_n: tuple[int, int] = valence_p_n
+        self.norb: list[int] = norb
+        self.lorb: list[int] = lorb
+        self.jorb: list[int] = jorb
+        self.itorb: list[int] = itorb
+        self.parityorb: list[int] = [(-1)**l for l in lorb]
 
         self.norb_pn = [
             [n for n, t in zip(norb, itorb) if t == -1],
@@ -150,7 +150,7 @@ class ModelSpace:
         # phorb ... orbit list
         # mmhw ... min. and max occupation
         # can be called  once
-        hworb = [0,]*len(self.norb)
+        hworb = [0]*len(self.norb)
         for i in phorb: hworb[i] += 1
         self.hworb_pn = [ [ p for p,t in zip(hworb, self.itorb) 
                             if t == -1], 
@@ -158,24 +158,42 @@ class ModelSpace:
                             if t ==  1] ]
         self.set_hw_truncation(mmhw, is_hw_exct=False)
 
-    def set_hw_truncation(self, mmhw, is_hw_exct=True):
-        if self.is_called_hw: raise "not called hw trunc twice"
+    def set_hw_truncation(self,
+            hw_trunctation: list[int],
+            is_hw_exct: bool = True,
+        ):
+        """
+        Parameters
+        ----------
+        hw_trunctation : list[int]
+            Minimum and maximum number of nucleons to be excited across
+            the major shell gaps.
+        """
+        if self.is_called_hw:
+            msg = "'set_hw_truncation' can only be called once but it was called twice."
+            raise RuntimeError(msg)
+
         self.is_called_hw = True            
-        self.minhw, self.maxhw = mmhw
+        self.minhw, self.maxhw = hw_trunctation
+        
         if is_hw_exct:
-            self.hworb_pn = [ [ 2*n+l for n,l,t 
-                                in zip(self.norb, self.lorb, self.itorb) 
-                                if t==tz ]
-                              for tz in (-1, 1) ]
+            self.hworb_pn = [
+                [2*n + l for n, l, t in zip(self.norb, self.lorb, self.itorb) if t == tz ] for tz in (-1, 1)
+            ]
+        
         lowest_pn, highest_pn = self.cal_hw_low_high_pn(self.valence_p_n)
+        
         if is_hw_exct:
             self.minhw += sum(lowest_pn)
             self.maxhw += sum(lowest_pn)
             print("lowest hw, maxhw ", self.minhw, self.maxhw)
-        self.maxhw_pn = ( min(self.maxhw - lowest_pn[1], highest_pn[0]) , 
-                          min(self.maxhw - lowest_pn[0], highest_pn[1]) )
-        self.minhw_pn = ( max(self.minhw - highest_pn[1], lowest_pn[0]) , 
-                          max(self.minhw - highest_pn[0], lowest_pn[1]) )
+        
+        self.maxhw_pn = (
+            min(self.maxhw - lowest_pn[1], highest_pn[0]), min(self.maxhw - lowest_pn[0], highest_pn[1])
+        )
+        self.minhw_pn = (
+            max(self.minhw - highest_pn[1], lowest_pn[0]), max(self.minhw - highest_pn[0], lowest_pn[1])
+        )
 
     def set_ph_truncation(self, orb_list, t_list):
         self.phtrunc_t = t_list
@@ -219,18 +237,65 @@ class ModelSpace:
         self.monopole_e_thd = thd_energy
 
     def gen_ptn_pn(self):
+        """
+        Variables
+        ---------
+        orb_hw : list[list[int]]
+            `orb_hw` is a list of lists. Each sublist contains the
+            occupation number for each orbital in the same major shell.
+
+        self.hworb_pn : list[list[int]]
+            `self.hworb_pn` is possibly a list of which major shell each
+            orbital belongs to. For sdpf-mu the list is
+            
+                self.hworb_pn = [
+                    [2, 2, 2, 3, 3, 3, 3], [2, 2, 2, 3, 3, 3, 3]
+                ]
+            
+            which might mean that the 1d5/2, 1d3/2 and 2s1/2 orbitals
+            belong to the same major shell (number 2), while 1f7/2,
+            1f5/2, 2p3/2 and 2p1/2 belong to the same major shell
+            (number 3). There is one sublist for protons and one for
+            neutrons.
+
+        self.jorb_pn : list[list[int]]
+            Each sublist contains the total angular momentum for each
+            orbital. One sublist for protons and one for neutrons. For
+            sdpf-mu the list is
+
+                self.jorb_pn = [
+                    [5, 3, 1, 7, 5, 3, 1], [5, 3, 1, 7, 5, 3, 1]
+                ]
+
+        orb_nhw : list[int]
+            `orb_nhw` is a list with the maximum occupation number for
+            each major shell. For sdpf-mu the list is
+
+                orb_nhw = [12, 20] 
+
+            meaning that the sd shell can have a maximum of 12
+            protons and 12 neutrons, while the pf shell can have a
+            maximum of 20 protons and 20 neutrons.
+        """
         # nocc_orb_pn = [ [ j+1 for j,t in zip(self.jorb, self.itorb) 
         #                   if t==-1], 
         #                 [ j+1 for j,t in zip(self.jorb, self.itorb) 
         #                   if t== 1] ]
         self.ptn_pn = [[], []]
 
-        # print(f"{orb_hw = }")
-        def gen_hw_nocc(orb_hw, hwnocc):
+        def gen_hw_nocc(orb_hw: list[list[int]], hwnocc):
+            """
+            Parameters
+            ----------
+            orb_hw : list[list[int]]
+                Max. occupation number for each orbital. There is one
+                sublist for each major shell. Hence, USDA will only have
+                one sublist while sdpf-mu has two.
+            """
             if self.valence_p_n == 0:
                 yield (0,)*sum([len(i) for i in orb_hw])
                 return
-            if len(orb_hw)==1:
+            if len(orb_hw) == 1:
                 for i in self.gen_nocc(orb_hw[0], hwnocc[0]):
                     yield i
                 return
@@ -238,9 +303,8 @@ class ModelSpace:
                 for j in gen_hw_nocc(orb_hw[1:], hwnocc[1:]):
                     yield i + j
 
-        print(f"{self.hworb_pn =}")
-        print(f"{self.jorb_pn =}")
-        sys.exit()
+        print(f"{self.hworb_pn = }")
+        print(f"{self.jorb_pn = }")
         for tz in range(2):
             hw_list, orb_hw = [], []
             hw0 = -0.1 # initialized, not integer
@@ -255,6 +319,10 @@ class ModelSpace:
                     orb_hw[-1].append(j+1)
             orb_nhw = [ sum(arr) for arr in orb_hw ]
             hw_nocc = []
+            print(f"{orb_hw = }")
+            print(f"{orb_nhw = }")
+            print(f"{hw_list = }")
+            
             for arr in self.gen_nocc(orb_nhw, self.valence_p_n[tz]):
                 nhw = sum( hw*n for hw,n in zip(hw_list, arr))
                 if nhw > self.maxhw_pn[tz]: continue
@@ -263,10 +331,9 @@ class ModelSpace:
 
             def check_trunc_pn( arr ):
                 for i in range(len(self.phtrunc_t)):
-                    if not ( self.phtrunc_mint_pn[i][tz] 
-                             <= sum( [ m*n for m,n in 
-                                       zip(self.phtrunc_mask_pn[i][tz],arr)] ) 
-                             <= self.phtrunc_maxt_pn[i][tz] ):
+                    if not (
+                        self.phtrunc_mint_pn[i][tz] <= sum( [ m*n for m, n in zip(self.phtrunc_mask_pn[i][tz], arr)] ) <= self.phtrunc_maxt_pn[i][tz]
+                    ):
                         return False
                 return True
 
@@ -405,12 +472,19 @@ class ModelSpace:
         if len(self.ptn_list)==0: 
             sys.stdout.write( "\n *** WARNING NO PARTITION *** \n" )
 
-    def cal_hw_low_high_pn(self, valence_p_n):
-        # total hw excitation of the lowest and highest configuration
+    def cal_hw_low_high_pn(self, valence_p_n: tuple[int, int]):
+        """
+        total hw excitation of the lowest and highest configuration
+
+        Parameters
+        ----------
+        valence_p_n : tuple[int, int]
+            The number of valence protons and neutrons.
+        """
         nhw = [ [], [] ]
         for tz in range(2):
             for i in range(len(self.jorb_pn[tz])):
-                nhw[tz] += [ self.hworb_pn[tz][i], ]*(self.jorb_pn[tz][i]+1) 
+                nhw[tz] += [ self.hworb_pn[tz][i], ]*(self.jorb_pn[tz][i] + 1)
         for tz in range(2): nhw[tz].sort()
         return ( sum(nhw[0][:valence_p_n[0]]), sum(nhw[1][:valence_p_n[1]]) ), \
             ( sum(nhw[0][-valence_p_n[0]:]), sum(nhw[1][-valence_p_n[1]:]) )
@@ -429,7 +503,7 @@ class ModelSpace:
         return lowest_pn, highest_pn
 
     def gen_nocc(self, nlist, valence_p_n):
-        if valence_p_n==0: 
+        if valence_p_n == 0: 
             yield (0,)*len(nlist)
             return
         if len(nlist)==1:
@@ -437,8 +511,8 @@ class ModelSpace:
             return
         ns, nrest = nlist[0], nlist[1:]
         # for i in range(max(0, valence_p_n-sum(nrest)), min(ns, valence_p_n)+1): 
-        for i in range(min(ns, valence_p_n), max(0, valence_p_n-sum(nrest))-1, -1): 
-            for j in self.gen_nocc(nrest, valence_p_n-i):
+        for i in range(min(ns, valence_p_n), max(0, valence_p_n - sum(nrest)) -1, -1): 
+            for j in self.gen_nocc(nrest, valence_p_n - i):
                 yield (i,) + j
 
 def main(
@@ -534,17 +608,17 @@ def main(
 
     if not 0 <= truncation_mode <= 4: raise 'input out of range'
 
-    if (truncation_mode == 2) or (truncation_mode == 3): 
-        def ask_max_hw():
-            ans = raw_input_save( " (min. and) max hw for excitation : " )
-            ans = ans.replace(',', ' ').split()
-            ans = [int(i) for i in ans]
-            return ans
-        ans = ask_max_hw()
-        if len(ans)==1: ans = [0, ans[0]]
-        class_ms.set_hw_truncation(ans)
-        fpout.write("# hw trucnation,  min hw = "+str(ans[0]) 
-                    +" ,   max hw = "+str(ans[1])+"\n")
+    if (truncation_mode == 2) or (truncation_mode == 3):
+        """
+        Prompt user for hw truncation.
+        """
+        hw_truncation = raw_input_save( " (min. and) max hw for excitation : " )
+        hw_truncation = hw_truncation.replace(",", " ").split()
+        hw_truncation = [int(i) for i in hw_truncation]
+        if len(hw_truncation) == 1: hw_truncation = [0, hw_truncation[0]]
+        class_ms.set_hw_truncation(hw_truncation)
+        fpout.write("# hw trucnation,  min hw = "+str(hw_truncation[0]) 
+                    +" ,   max hw = "+str(hw_truncation[1])+"\n")
 
     if (truncation_mode == 1) or (truncation_mode == 3):
         print("   #    n   l   j   tz    spe ")
