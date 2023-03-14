@@ -59,30 +59,88 @@ def orb2char(n, l, j, tz):
     return "%c_%d%c%d/2" % (tz2c[tz], n, lorb2c[l], j)
 
 class ModelSpace:
-    def __init__(self, valence_p_n, norb, lorb, jorb, itorb):
-        self.nferm = valence_p_n
-        self.norb = norb
-        self.lorb = lorb
-        self.jorb = jorb
-        self.itorb = itorb
-        self.iporb = [(-1)**l for l in lorb]
-        self.norb_pn = [ [ n for n,t in zip(norb,itorb) if t==-1], 
-                         [ n for n,t in zip(norb,itorb) if t== 1] ]
-        self.lorb_pn = [ [ l for l,t in zip(lorb,itorb) if t==-1], 
-                         [ l for l,t in zip(lorb,itorb) if t== 1] ]
-        self.jorb_pn = [ [ j for j,t in zip(jorb,itorb) if t==-1], 
-                         [ j for j,t in zip(jorb,itorb) if t== 1] ]
-        self.iporb_pn = [ [ p for p,t in zip(self.iporb,itorb) if t==-1], 
-                          [ p for p,t in zip(self.iporb,itorb) if t== 1] ]
+    def __init__(self,
+        valence_p_n: tuple,
+        norb: list,
+        lorb: list,
+        jorb: list,
+        itorb: list,
+    ):
+        """
+        Parameters
+        ----------
+        valence_p_n : tuple
+            Number of valence protons and neutrons. For example, if the
+            interaction is USDA and the nucleus is 22Ne, then this
+            will be (2, 2).
+
+        norb : list
+            "Principal quantum number" of each orbital. Not really the
+            principal quantum number as in atomic physics, but rather
+            a counter which counts the number of times an orbital of a
+            certain total angular momentum has occurred. For USDA we
+            have the following model space:
+
+                1     0   2   3  -1  !   1 = p 0d_ 3/2
+                2     0   2   5  -1  !   2 = p 0d_ 5/2
+                3     1   0   1  -1  !   3 = p 1s_ 1/2
+                4     0   2   3   1  !   4 = n 0d_ 3/2
+                5     0   2   5   1  !   5 = n 0d_ 5/2
+                6     1   0   1   1  !   6 = n 1s_ 1/2
+
+            where `norb` is [0, 0, 1, 0, 0, 1]. 0d_ 3/2 is the first
+            d_ 3/2 orbital, while 1s_ 1/2 is the second s_ 1/2 orbital.
+            This is because USDA has an inert 18O core which contains an
+            s_ 1/2 orbital.
+
+        lorb : list
+            Orbital angular momentum of each orbital. For USDA we have
+            `lorb` equal to [2, 2, 0, 2, 2, 0].
+
+        jorb : list
+            Total angular momentum of each orbital. For USDA we have
+            `jorb` equal to [3, 5, 1, 3, 5, 1]. Note that the values are
+            multiplied by 2 to avoid having to deal with floats.
+
+        itorb : list
+            Isospin of each orbital. For USDA we have `itorb` equal to
+            [-1, -1, -1, 1, 1, 1]. -1 corresponds to protons, while 1
+            corresponds to neutrons.
+        """
+        self.valence_p_n: tuple = valence_p_n
+        self.norb: list = norb
+        self.lorb: list = lorb
+        self.jorb: list = jorb
+        self.itorb: list = itorb
+        self.parityorb = [(-1)**l for l in lorb]
+
+        self.norb_pn = [
+            [n for n, t in zip(norb, itorb) if t == -1],
+            [n for n, t in zip(norb, itorb) if t == 1],
+        ]
+        self.lorb_pn = [
+            [l for l, t in zip(lorb, itorb) if t == -1],
+            [l for l, t in zip(lorb, itorb) if t == 1],
+        ]
+        self.jorb_pn = [    # Make separate jorb lists for protons and neutrons.
+            [j for j, t in zip(jorb, itorb) if t == -1],
+            [j for j, t in zip(jorb, itorb) if t == 1],
+        ]
+        self.iporb_pn = [
+            [p for p, t in zip(self.parityorb, itorb) if t == -1],
+            [p for p, t in zip(self.parityorb, itorb) if t == 1],
+        ]
         self.phtrunc_t = []
         self.phtrunc_orb = []
         self.phtrunc_mask_pn = []
-        self.phtrunc_maxt_pn, self.phtrunc_mint_pn = [], []
-        
-        
+        self.phtrunc_maxt_pn = []
+        self.phtrunc_mint_pn = []
+
         self.minhw, self.maxhw = 0, 0
-        self.hworb_pn = [ [0 for t in self.itorb  if t==-1 ], 
-                          [0 for t in self.itorb  if t== 1 ] ]
+        self.hworb_pn = [
+            [0 for t in self.itorb if t == -1 ],
+            [0 for t in self.itorb if t == 1],
+        ]
         self.maxhw_pn, self.minhw_pn = (0, 0), (0, 0)
         self.is_called_hw = False
         self.is_monopole_trunc = False
@@ -109,7 +167,7 @@ class ModelSpace:
                                 in zip(self.norb, self.lorb, self.itorb) 
                                 if t==tz ]
                               for tz in (-1, 1) ]
-        lowest_pn, highest_pn = self.cal_hw_low_high_pn(self.nferm)
+        lowest_pn, highest_pn = self.cal_hw_low_high_pn(self.valence_p_n)
         if is_hw_exct:
             self.minhw += sum(lowest_pn)
             self.maxhw += sum(lowest_pn)
@@ -130,7 +188,7 @@ class ModelSpace:
                 [ [mask[i] for i,t in enumerate(self.itorb) if t==-1], 
                   [mask[i] for i,t in enumerate(self.itorb) if t== 1] ] )
 
-        lowest_pn, highest_pn = self.cal_phtrunc_t_low_high_pn(self.nferm)
+        lowest_pn, highest_pn = self.cal_phtrunc_t_low_high_pn(self.valence_p_n)
 
         self.phtrunc_maxt_pn = [
             ( min( pht[1]-lpn[1], hpn[0] ) , min( pht[1]-lpn[0], hpn[1] ) ) 
@@ -161,14 +219,15 @@ class ModelSpace:
         self.monopole_e_thd = thd_energy
 
     def gen_ptn_pn(self):
-        nocc_orb_pn = [ [ j+1 for j,t in zip(self.jorb, self.itorb) 
-                          if t==-1], 
-                        [ j+1 for j,t in zip(self.jorb, self.itorb) 
-                          if t== 1] ]
+        # nocc_orb_pn = [ [ j+1 for j,t in zip(self.jorb, self.itorb) 
+        #                   if t==-1], 
+        #                 [ j+1 for j,t in zip(self.jorb, self.itorb) 
+        #                   if t== 1] ]
         self.ptn_pn = [[], []]
 
+        # print(f"{orb_hw = }")
         def gen_hw_nocc(orb_hw, hwnocc):
-            if self.nferm==0: 
+            if self.valence_p_n == 0:
                 yield (0,)*sum([len(i) for i in orb_hw])
                 return
             if len(orb_hw)==1:
@@ -179,6 +238,9 @@ class ModelSpace:
                 for j in gen_hw_nocc(orb_hw[1:], hwnocc[1:]):
                     yield i + j
 
+        print(f"{self.hworb_pn =}")
+        print(f"{self.jorb_pn =}")
+        sys.exit()
         for tz in range(2):
             hw_list, orb_hw = [], []
             hw0 = -0.1 # initialized, not integer
@@ -193,7 +255,7 @@ class ModelSpace:
                     orb_hw[-1].append(j+1)
             orb_nhw = [ sum(arr) for arr in orb_hw ]
             hw_nocc = []
-            for arr in self.gen_nocc(orb_nhw, self.nferm[tz]):
+            for arr in self.gen_nocc(orb_nhw, self.valence_p_n[tz]):
                 nhw = sum( hw*n for hw,n in zip(hw_list, arr))
                 if nhw > self.maxhw_pn[tz]: continue
                 if nhw < self.minhw_pn[tz]: continue
@@ -317,8 +379,8 @@ class ModelSpace:
     def write_ptn_pn(self, fp, parity, model_space_filename):
         # output partition of proton and neutron separately
         fp.write( "# partition file of %s  Z=%d  N=%d  parity=%+d\n" 
-                  % (model_space_filename, self.nferm[0], self.nferm[1], parity ) )
-        fp.write( " %d %d %d\n" % (self.nferm[0], self.nferm[1], parity) )
+                  % (model_space_filename, self.valence_p_n[0], self.valence_p_n[1], parity ) )
+        fp.write( " %d %d %d\n" % (self.valence_p_n[0], self.valence_p_n[1], parity) )
         fp.write( "# num. of  proton partition, neutron partition\n" )
         fp.write( " %d %d\n" % (len(self.ptn_pn[0]), len(self.ptn_pn[1]) ))
         for tz in range(2):
@@ -408,9 +470,10 @@ def main(
         print(f"File '{model_space_filename=}' not found")
         sys.exit()
     
-    n_jorb, n_core = [0,0], [0,0]
+    n_jorb, n_core = [0, 0], [0, 0]
     n_jorb[0], n_jorb[1], n_core[0], n_core[1] = read_comment_skip(fp)
     norb, lorb, jorb, itorb = [], [], [], []
+    
     for i in range(sum(n_jorb)):
         arr = read_comment_skip(fp)
         if i+1!=arr[0]: raise "read error"
@@ -418,7 +481,7 @@ def main(
         lorb.append(arr[2])
         jorb.append(arr[3])
         itorb.append(arr[4])
-        if (i<n_jorb[0] and arr[4]!=-1) or (i>=n_jorb[0] and arr[4]!=1): 
+        if (i < n_jorb[0] and arr[4] != -1) or (i >= n_jorb[0] and arr[4] != 1): 
             raise "ERROR to read snt: proton orbit should come first"
     spe = [0.]*sum(n_jorb)
     nline = read_comment_skip(fp)
@@ -430,9 +493,9 @@ def main(
 
     fp.close()
 
-    
-    
-    class_ms = ModelSpace( valence_p_n, norb, lorb, jorb, itorb )
+    class_ms = ModelSpace(
+        valence_p_n, norb, lorb, jorb, itorb
+    )
 
     # parity check
     prty_list = [ set(ip) for ip in class_ms.iporb_pn ]
