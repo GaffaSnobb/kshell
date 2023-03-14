@@ -14,7 +14,7 @@
 !
 ! You should have received a copy of the GNU General Public License along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-
+! lolz
 module kshell_func
     ! module to use subroutine as dummy object
     use constant, only: kwf
