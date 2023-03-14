@@ -228,9 +228,7 @@ def extract_valence_protons_and_neutrons(input_nuclide: str) -> tuple:
         
     print('\n number of valence particles ', nf1, nf2)
     
-    if nf1 < 0 or nf2 < 0 or \
-       nf1 > snt_parameters['nfmax'][0] or \
-       nf2 > snt_parameters['nfmax'][1]:
+    if (nf1 < 0) or (nf2 < 0) or (nf1 > snt_parameters['nfmax'][0]) or (nf2 > snt_parameters['nfmax'][1]):
         print('*** ERROR: nuclide out of model space ***')
         return False
     return (nf1, nf2)
