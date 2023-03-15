@@ -243,6 +243,9 @@ class ModelSpace:
         orb_hw : list[list[int]]
             `orb_hw` is a list of lists. Each sublist contains the
             occupation number for each orbital in the same major shell.
+            For `sdpf-mu` it is
+
+                orb_hw = [[6, 4, 2], [8, 6, 4, 2]]
 
         self.hworb_pn : list[list[int]]
             `self.hworb_pn` is possibly a list of which major shell each
@@ -306,28 +309,51 @@ class ModelSpace:
         print(f"{self.hworb_pn = }")
         print(f"{self.jorb_pn = }")
         for tz in range(2):
-            hw_list, orb_hw = [], []
+            hw_list: list[int] = []
+            orb_hw: list[list[int]] = []
             hw0 = -0.1 # initialized, not integer
-            ihw = 0
+            ihw = 0 # I dont think this is used for anything.
+            print("just before hw, j loop")
             for hw, j in zip(self.hworb_pn[tz], self.jorb_pn[tz]):
-                if hw != hw0: 
+                """
+                `hw` is an index which specifies the major shell of each
+                orbital. Each orbital has an hw index. For USDA hw is 0
+                for all orbitals while for sdpf-mu hw is 2 and 3 for the
+                different orbitals. `j` is the total angular momentum of
+                the accompanying orbital.
+                """
+                print(f"{hw = }")
+                print(f"{j = }")
+                if hw != hw0:
+                    """
+                    The fist time this value of `hw` shows up. Append
+                    the `hw` index to the `hw_list` and create a sublist
+                    in `orb_hw` for the current major shell.
+                    """
                     hw_list.append(hw)
                     ihw += 1
                     hw0 = hw
-                    orb_hw.append([j+1])
+                    orb_hw.append([j+1])    # Append max occupation number for the current orbital.
                 else:
+                    """
+                    A sublist for `hw` already exists, so append the
+                    max occupation number for the current orbital to
+                    that sublist.
+                    """
                     orb_hw[-1].append(j+1)
-            orb_nhw = [ sum(arr) for arr in orb_hw ]
+
+            orb_nhw = [ sum(arr) for arr in orb_hw ]    # Sum the max occupation number for each major shell.
             hw_nocc = []
-            print(f"{orb_hw = }")
-            print(f"{orb_nhw = }")
-            print(f"{hw_list = }")
+            # print(f"{orb_nhw = }")
+            # print(f"{hw_list = }")
             
             for arr in self.gen_nocc(orb_nhw, self.valence_p_n[tz]):
                 nhw = sum( hw*n for hw,n in zip(hw_list, arr))
                 if nhw > self.maxhw_pn[tz]: continue
                 if nhw < self.minhw_pn[tz]: continue
                 hw_nocc.append( arr )
+            print(f"{orb_hw = }")
+            print(f"{hw_nocc = }")
 
             def check_trunc_pn( arr ):
                 for i in range(len(self.phtrunc_t)):
