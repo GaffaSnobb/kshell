@@ -19,6 +19,8 @@ def test_gen_partition_usda_ne20():
     ]
     expected_hworb_pn = [[0, 0, 0], [0, 0, 0]]
     expected_jorb_pn = [[3, 5, 1], [3, 5, 1]]
+    expected_ptn_pn_parity = [[1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1]]
+    ms.ptn_combined(parity=+1)
 
     for expected, calculated, nucleon in zip(expected_ptn_pn, ms.ptn_pn, ["proton", "neutron"]):
         n_expected = len(expected)
@@ -87,6 +89,76 @@ def test_gen_partition_sdpfmu_sc44():
     ]
     expected_hworb_pn = [[2, 2, 2, 3, 3, 3, 3], [2, 2, 2, 3, 3, 3, 3]]
     expected_jorb_pn = [[5, 3, 1, 7, 5, 3, 1], [5, 3, 1, 7, 5, 3, 1]]
+    expected_ptn_pn_parity = [
+        [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1], [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+    ]
+
+    for expected, calculated, nucleon in zip(expected_ptn_pn, ms.ptn_pn, ["proton", "neutron"]):
+        n_expected = len(expected)
+        n_calculated = len(calculated)
+        len_msg = (
+            f"The number of expected {nucleon} confgurations do not match the number of"
+            f" calculated configurations. {n_expected = }, {n_calculated = }"
+        )
+        assert n_expected == n_calculated, len_msg
+        
+        for i in range(n_expected):
+            ptn_msg = (
+                f"{nucleon} configuration number {i} has a mismatch between"
+                f" expected and calculated. {expected[i] = }, {calculated[i] = }"
+            )
+            assert expected[i] == calculated[i], ptn_msg
+
+    for expected, calculated, nucleon in zip(expected_hworb_pn, ms.hworb_pn, ["proton", "neutron"]):
+        n_expected = len(expected)
+        n_calculated = len(calculated)
+        len_msg = (
+            f"The number of expected {nucleon} major shell indices do not match the number of"
+            f" calculated major shell indices. {n_expected = }, {n_calculated = }"
+        )
+        assert n_expected == n_calculated, len_msg
+        
+        hworb_msg = (
+            f"The {nucleon} major shell indices do not match the expectations."
+            f" {expected = }, {calculated = }"
+        )
+        assert expected == calculated, hworb_msg
+
+    for expected, calculated, nucleon in zip(expected_jorb_pn, ms.jorb_pn, ["proton", "neutron"]):
+        n_expected = len(expected)
+        n_calculated = len(calculated)
+        len_msg = (
+            f"The expected number of total angular momentum entries for {nucleon}"
+            f" do not match the number of calculated entries. {n_expected = }, {n_calculated = }"
+        )
+        assert n_expected == n_calculated, len_msg
+        
+        hworb_msg = (
+            f"The {nucleon} total angular momenta do not match the expectations."
+            f" {expected = }, {calculated = }"
+        )
+        assert expected == calculated, hworb_msg
+
+def test_gen_partition_snbg1_sn120():
+    """
+    Generate the partition for 120Sn with the snbg1 interaction with
+    `gen_partition.ModelSpace` and compare with known good values.
+    """
+    ms = gen_partition.ModelSpace(
+        valence_p_n = (0, 20),
+        norb = [1, 0, 0, 2, 1],
+        lorb = [2, 4, 5, 0, 2],
+        jorb = [5, 7, 11, 1, 3],
+        itorb = [1, 1, 1, 1, 1],
+    )
+    ms.gen_ptn_pn()
+    return
+    expected_ptn_pn = [
+        [(0, 0, 2), (0, 1, 1), (0, 2, 0), (1, 0, 1), (1, 1, 0), (2, 0, 0)],
+        [(0, 0, 2), (0, 1, 1), (0, 2, 0), (1, 0, 1), (1, 1, 0), (2, 0, 0)]
+    ]
+    expected_hworb_pn = [[0, 0, 0], [0, 0, 0]]
+    expected_jorb_pn = [[3, 5, 1], [3, 5, 1]]
 
     for expected, calculated, nucleon in zip(expected_ptn_pn, ms.ptn_pn, ["proton", "neutron"]):
         n_expected = len(expected)
@@ -137,11 +209,4 @@ def test_gen_partition_sdpfmu_sc44():
 if __name__ == "__main__":
     test_gen_partition_usda_ne20()
     test_gen_partition_sdpfmu_sc44()
-
-    # ms = gen_partition.ModelSpace(
-    #     valence_p_n = (0, 20),
-    #     norb = [1, 0, 0, 2, 1],
-    #     lorb = [2, 4, 5, 0, 2],
-    #     jorb = [5, 7, 11, 1, 3],
-    #     itorb = [1, 1, 1, 1, 1],
-    # )
+    # test_gen_partition_snbg1_sn120()
