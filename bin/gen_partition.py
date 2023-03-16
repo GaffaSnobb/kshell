@@ -159,7 +159,7 @@ class ModelSpace:
         self.set_hw_truncation(mmhw, is_hw_exct=False)
 
     def set_hw_truncation(self,
-            hw_trunctation: list[int],
+            hw_truncation: list[int],
             is_hw_exct: bool = True,
         ):
         """
@@ -174,7 +174,7 @@ class ModelSpace:
             raise RuntimeError(msg)
 
         self.is_called_hw = True            
-        self.minhw, self.maxhw = hw_trunctation
+        self.minhw, self.maxhw = hw_truncation
         
         if is_hw_exct:
             self.hworb_pn = [
@@ -286,7 +286,7 @@ class ModelSpace:
         #                   if t== 1] ]
         self.ptn_pn = [[], []]
 
-        def gen_hw_nocc(orb_hw: list[list[int]], hwnocc):
+        def gen_hw_nocc(orb_hw: list[list[int]], hwnocc, n_valence: int | None = None):
             """
             Parameters
             ----------
@@ -295,10 +295,21 @@ class ModelSpace:
                 sublist for each major shell. Hence, USDA will only have
                 one sublist while sdpf-mu has two.
             """
-            if self.valence_p_n == 0:
+            # if self.valence_p_n == 0:
+            if n_valence == 0:
+                """
+                Some combinations of interaction and nucleus might have
+                0 valence protons or neutrons. Eg. sn100pn with any Sn
+                isotope.
+                """
                 yield (0,)*sum([len(i) for i in orb_hw])
                 return
             if len(orb_hw) == 1:
+                """
+                If the model space has only one major shell or if the
+                recursive calls of this function has reached the final
+                major shell.
+                """
                 for i in self.gen_nocc(orb_hw[0], hwnocc[0]):
                     yield i
                 return
@@ -306,14 +317,11 @@ class ModelSpace:
                 for j in gen_hw_nocc(orb_hw[1:], hwnocc[1:]):
                     yield i + j
 
-        print(f"{self.hworb_pn = }")
-        print(f"{self.jorb_pn = }")
         for tz in range(2):
             hw_list: list[int] = []
             orb_hw: list[list[int]] = []
             hw0 = -0.1 # initialized, not integer
             ihw = 0 # I dont think this is used for anything.
-            print("just before hw, j loop")
             for hw, j in zip(self.hworb_pn[tz], self.jorb_pn[tz]):
                 """
                 `hw` is an index which specifies the major shell of each
@@ -322,8 +330,6 @@ class ModelSpace:
                 different orbitals. `j` is the total angular momentum of
                 the accompanying orbital.
                 """
-                print(f"{hw = }")
-                print(f"{j = }")
                 if hw != hw0:
                     """
                     The fist time this value of `hw` shows up. Append
@@ -344,16 +350,11 @@ class ModelSpace:
 
             orb_nhw = [ sum(arr) for arr in orb_hw ]    # Sum the max occupation number for each major shell.
             hw_nocc = []
-            # print(f"{orb_nhw = }")
-            # print(f"{hw_list = }")
-            
             for arr in self.gen_nocc(orb_nhw, self.valence_p_n[tz]):
                 nhw = sum( hw*n for hw,n in zip(hw_list, arr))
                 if nhw > self.maxhw_pn[tz]: continue
                 if nhw < self.minhw_pn[tz]: continue
                 hw_nocc.append( arr )
-            print(f"{orb_hw = }")
-            print(f"{hw_nocc = }")
 
             def check_trunc_pn( arr ):
                 for i in range(len(self.phtrunc_t)):
@@ -364,7 +365,23 @@ class ModelSpace:
                 return True
 
             for hwnocc in hw_nocc:
-                for arr in gen_hw_nocc(orb_hw, hwnocc):
+                """
+                For 44Sc sdpf-mu with 2hw truncation:
+
+                    hw_nocc = [(12, 1), (11, 2), (10, 3)]
+                    hw_nocc = [(12, 3), (11, 4), (10, 5)]
+
+                For 44Sc sdpf-mu with no truncation:
+
+                    hw_nocc = [(13,)]
+                    hw_nocc = [(15,)]
+
+                for 20Ne USDA:
+                
+                    hw_nocc = [(2,)]
+                    hw_nocc = [(2,)]
+                """
+                for arr in gen_hw_nocc(orb_hw, hwnocc, n_valence=self.valence_p_n[tz]):
                     if check_trunc_pn( arr ):
                         self.ptn_pn[tz].append( arr )
             self.ptn_pn[tz].sort()
@@ -372,10 +389,8 @@ class ModelSpace:
     def ptn_combined(self, parity):
         # parity
         self.ptn_pn_parity = [
-            [ reduce(operator.mul, 
-                     [ p**n for p,n in zip(self.iporb_pn[tz], arr) ])
-              for arr in self.ptn_pn[tz] ]
-            for tz in range(2) ]
+            [reduce(operator.mul, [p**n for p, n in zip(self.iporb_pn[tz], arr)] + [1]) for arr in self.ptn_pn[tz]] for tz in range(2)
+        ]
         # hw 
         self.ptn_pn_hw = [ 
             [ sum( self.hworb_pn[tz][i]*arr[i] for i in range(len(arr)))
@@ -528,11 +543,26 @@ class ModelSpace:
             highest_pn.append((sum(nhw[0][-valence_p_n[0]:]),sum(nhw[1][-valence_p_n[1]:])))
         return lowest_pn, highest_pn
 
-    def gen_nocc(self, nlist, valence_p_n):
+    def gen_nocc(self, nlist, valence_p_n: int):
+        """
+        Parameters
+        ----------
+        valence_p_n : int
+            The number of valence protons or neutrons.
+        Returns
+        -------
+        For 44Sc sdpf-mu, returns a generator with the following:
+
+            [(12, 1), (11, 2), (10, 3), (9, 4), (8, 5), (7, 6), (6, 7),
+            (5, 8), (4, 9), (3, 10), (2, 11), (1, 12), (0, 13)]
+
+            [(12, 3), (11, 4), (10, 5), (9, 6), (8, 7), (7, 8), (6, 9),
+            (5, 10), (4, 11), (3, 12), (2, 13), (1, 14), (0, 15)]
+        """
         if valence_p_n == 0: 
             yield (0,)*len(nlist)
             return
-        if len(nlist)==1:
+        if len(nlist) == 1:
             yield (valence_p_n,)
             return
         ns, nrest = nlist[0], nlist[1:]
@@ -596,6 +626,12 @@ def main(
     class_ms = ModelSpace(
         valence_p_n, norb, lorb, jorb, itorb
     )
+    # print(f"{valence_p_n = }")
+    # print(f"{norb = }")
+    # print(f"{lorb = }")
+    # print(f"{jorb = }")
+    # print(f"{itorb = }")
+    # return
 
     # parity check
     prty_list = [ set(ip) for ip in class_ms.iporb_pn ]
