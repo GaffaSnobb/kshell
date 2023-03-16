@@ -1,4 +1,17 @@
+import os, sys
 import gen_partition
+
+class SuppressPrint:
+    """
+    To suppress prints from `gen_partition` when testing it.
+    """
+    def __enter__(self):
+        self._original_stdout = sys.stdout
+        sys.stdout = open(os.devnull, 'w')
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        sys.stdout.close()
+        sys.stdout = self._original_stdout
 
 def test_gen_partition_usda_ne20():
     """
@@ -221,6 +234,7 @@ def test_gen_partition_snbg1_sn120():
         assert expected == calculated, hworb_msg
 
 if __name__ == "__main__":
-    test_gen_partition_usda_ne20()
-    test_gen_partition_sdpfmu_sc44()
-    test_gen_partition_snbg1_sn120()
+    with SuppressPrint():
+        test_gen_partition_usda_ne20()
+        test_gen_partition_sdpfmu_sc44()
+        test_gen_partition_snbg1_sn120()
