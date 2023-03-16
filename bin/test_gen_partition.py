@@ -165,13 +165,14 @@ def test_gen_partition_snbg1_sn120():
         itorb = [1, 1, 1, 1, 1],
     )
     ms.gen_ptn_pn()
-    return
+    ms.ptn_combined(parity=+1)
     expected_ptn_pn = [
         [(0, 0, 2), (0, 1, 1), (0, 2, 0), (1, 0, 1), (1, 1, 0), (2, 0, 0)],
         [(0, 0, 2), (0, 1, 1), (0, 2, 0), (1, 0, 1), (1, 1, 0), (2, 0, 0)]
     ]
     expected_hworb_pn = [[0, 0, 0], [0, 0, 0]]
     expected_jorb_pn = [[3, 5, 1], [3, 5, 1]]
+    return
 
     for expected, calculated, nucleon in zip(expected_ptn_pn, ms.ptn_pn, ["proton", "neutron"]):
         n_expected = len(expected)
