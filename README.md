@@ -94,6 +94,9 @@ Code downloaded from https://sites.google.com/alumni.tsukuba.ac.jp/kshell-nuclea
   dim.     0                  640                   46   6.40x10^ 2  4.60x10^ 1
   ```
   The `J-scheme dim.` column indicates how many different states of the spin indicated in the `2*M` column that can be calculated in this model space with this configuration of protons and neutrons. 28Ar in USDA has 10 valence protons and 2 valence neutrons, and from `count_dim.py` we see that this model space and configuration allows 46 0+ states, 97 1+ states, 143 2+ states, and so on. Take the 0+ states as an example. If you request more than 46 0+ states, say 100, the best case scenario is that KSHELL gives you 46 0+ states and 54 invalid / undefined states. Worst case scenario is that KSHELL gives no output. The current best solution is to request exactly 46 0+ states if you want them all.
+  
+#### MPI issues
+  Remember that preprocessor lines cannot be indented. I had a problem with program crashes due to `MPI` errors and this was simply because three preprocessor lines were indented and therefore didnt compile properly.
 
 </p>
 </details>
