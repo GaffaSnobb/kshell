@@ -1865,12 +1865,21 @@ def main():
     shell_file_content_total = job_commands + shell_file_content_total
     check_copy('kshell.exe', 'transit.exe', 'count_dim.py')
     
-    shell_file_content_total = \
-        check_j_scheme_dimensionality(
-            states,
-            model_space_filename,
-            shell_file_content_total
+    try:
+        shell_file_content_total = \
+            check_j_scheme_dimensionality(
+                states,
+                model_space_filename,
+                shell_file_content_total
+            )
+    except IndexError:
+        msg = (
+            "Warning! Could not calculate the dimensionality."
+            " This is probably because of an interaction with only proton"
+            " or neutron orbitals (like `snbg1.snt`). This problem"
+            " does not affect the `KSHELL` executable files."
         )
+        print(msg)
 
     save_shell_script(
         kshell_shell_file_content_list = kshell_shell_file_content_list,
