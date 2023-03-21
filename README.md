@@ -97,6 +97,9 @@ Code downloaded from https://sites.google.com/alumni.tsukuba.ac.jp/kshell-nuclea
   
 #### MPI issues
   Remember that preprocessor lines cannot be indented. I had a problem with program crashes due to `MPI` errors and this was simply because three preprocessor lines were indented and therefore didnt compile properly.
+  
+#### WARNING: norm of initital vector too small *** decrease mpi_cnk *** / failed to read wf
+  There is a parameter in `constant.f90` called `mpi_cnk` but I have had no luck in removing this error message by reducing the numeric value of this parameter. I have solved the issue by re-calculating the `.wav` file in question, and at one point I had to re-run the calculation of the `.wav` with `n_block = 0`.
 
 </p>
 </details>
