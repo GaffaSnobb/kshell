@@ -25,13 +25,13 @@ module wavefunction
 
 contains
 
-   subroutine wf_alloc_vec(self, ptn)
-      type(type_vec_p), intent(inout) :: self
-      type(type_ptn_pn), intent(in), target :: ptn
-      self%ptn => ptn
-      if (associated(self%p)) call deallocate_l_vec(self%p)
-      call allocate_l_vec( self%p, ptn%max_local_dim )
-   end subroutine wf_alloc_vec
+  subroutine wf_alloc_vec(self, ptn)
+    type(type_vec_p), intent(inout) :: self
+    type(type_ptn_pn), intent(in), target :: ptn
+    self%ptn => ptn
+    if (associated(self%p)) call deallocate_l_vec(self%p)
+    call allocate_l_vec( self%p, ptn%max_local_dim )
+  end subroutine wf_alloc_vec
 
   subroutine wf_alloc_vecs(self, ptn)
     type(type_vec_p), intent(inout) :: self(:)
@@ -53,24 +53,52 @@ contains
     self%p = 1.d0 / sqrt(dot_product_global(self, self)) * self%p
   end subroutine wf_random_vec
 
-   function dot_product_global(self, rwf) result (r)
-      ! <self|rwf>  self and rwf are global vectors
-      !  "r" should be real(8), not real(kwf)
-      type(type_vec_p), intent(in) :: self, rwf
-      real(8) :: r, x
-      integer(kdim) :: mq
-      real(16) :: q, y, qg(nprocs)
+  function dot_product_global(self, rwf) result (r)
+    ! <self|rwf>  self and rwf are global vectors
+    !  "r" should be real(8), not real(kwf)
+    type(type_vec_p), intent(in) :: self, rwf
+    real(8) :: r, x
+    integer(kdim) :: mq
+    real(16) :: q, y, qg(nprocs)
 
-      r = 0.d0
-      !$omp parallel do private(mq) reduction (+: r)
-      do mq = 1, size(self%p, kind=kdim)
-         r = r + self%p(mq) * rwf%p(mq)
-      end do
+!    if (.not. associated(self%ptn, rwf%ptn)) stop "ERROR: dot_product_global"
+
+    if (.false. .and. kwf==8) then
+!    if (kwf==8) then
+       ! real(16) sum ... slow at SPARC
+       q = 0.q0
+       !$omp parallel do private(mq) reduction (+: q)
+       do mq = 1, size(self%p, kind=kdim)
+          q = q + self%p(mq) * rwf%p(mq)
+       end do
 #ifdef MPI
-      x = r
-      call mpi_allreduce(x, r, 1, mpi_real8, mpi_sum, mpi_comm_world, ierr)
+       y = q
+#ifdef SPARC
+       call mpi_allreduce(y, q, 1, mpi_real16, mpi_sum, &
+            mpi_comm_world, ierr)
+#else /* ad hoc solution */
+       call mpi_allgather(y, 16, mpi_byte, qg, 16, mpi_byte, &
+            mpi_comm_world, ierr)
+       q = sum(qg)
+#endif /* SPARC */
+       if (ierr/=0) write(*,*) "failed mpi_allreduce real16"
+#endif /* MPI */
+       r = q
+       return
+    end if
+
+    r = 0.d0
+    !$omp parallel do private(mq) reduction (+: r)
+    do mq = 1, size(self%p, kind=kdim)
+!    do mq = 1, self%ptn%local_dim
+       r = r + self%p(mq) * rwf%p(mq)
+    end do
+#ifdef MPI
+    x = r
+    call mpi_allreduce(x, r, 1, mpi_real8, mpi_sum, &
+         mpi_comm_world, ierr)
 #endif
-   end function dot_product_global
+  end function dot_product_global
 
 
   subroutine ex_occ_orb(self, occ)
@@ -79,7 +107,7 @@ contains
     real(8), intent(out) :: occ(:)
     type(type_ptn_pn), pointer :: ptn
     integer :: idl
-    real(8) :: r, occ1(n_j_orbitals(1)), occ2(n_j_orbitals(2))
+    real(8) :: r, occ1(n_jorb(1)), occ2(n_jorb(2))
     integer(kdim) :: mq
 
     ptn => self%ptn
@@ -99,13 +127,13 @@ contains
     end do
 
 #ifdef MPI
-    call mpi_allreduce(occ1, occ(1), n_j_orbitals(1), mpi_real8, &
+    call mpi_allreduce(occ1, occ(1), n_jorb(1), mpi_real8, &
          mpi_sum, mpi_comm_world, ierr)
-    call mpi_allreduce(occ2, occ(n_j_orbitals(1)+1), n_j_orbitals(2), mpi_real8, &
+    call mpi_allreduce(occ2, occ(n_jorb(1)+1), n_jorb(2), mpi_real8, &
          mpi_sum, mpi_comm_world, ierr)
 #else
-    occ(:n_j_orbitals(1))   = occ1
-    occ(n_j_orbitals(1)+1:) = occ2
+    occ(:n_jorb(1))   = occ1
+    occ(n_jorb(1)+1:) = occ2
 #endif 
   end subroutine ex_occ_orb
 
@@ -123,10 +151,10 @@ contains
 
     ptn => self%ptn
     
-    npn = (/ (isospin_orbitals(ni)+3)/2,  (isospin_orbitals(nj)+3)/2 /)
+    npn = (/ (itorb(ni)+3)/2,  (itorb(nj)+3)/2 /)
     nij = (/ ni, nj /)
     do i = 1, 2
-       if (npn(i)==2) nij(i) = nij(i) - n_j_orbitals(1) 
+       if (npn(i)==2) nij(i) = nij(i) - n_jorb(1) 
     end do
 
     rtomat(:,:) = 0.d0
@@ -147,8 +175,8 @@ contains
 #endif
 
     if (myrank /= 0) return
-    nni = min( n_ferm(npn(1)), j_orbitals(ni)+1 )
-    nnj = min( n_ferm(npn(2)), j_orbitals(nj)+1 )
+    nni = min( n_ferm(npn(1)), jorb(ni)+1 )
+    nnj = min( n_ferm(npn(2)), jorb(nj)+1 )
     write(*,'(a,i3,a,i3)') &
          "----- partition ratio --------  orbit=", ni, ' |x->', nj
     write(*,'(a,1000i7)',advance='no') '   ',(/( j, j=0, nnj )/)
@@ -169,7 +197,7 @@ contains
     type(type_vec_p), intent(in) :: self
     type(type_ptn_pn), pointer :: ptn
     integer :: ipn, id, i, j, k, n, idpn(2)
-    integer :: nhwn(n_j_orbitals_pn), lhw, hhw, l1, l2, h1, h2
+    integer :: nhwn(n_jorb_pn), lhw, hhw, l1, l2, h1, h2
     integer, allocatable :: nhw_occ(:)
     real(8), allocatable :: nhw_ratio(:), t(:)
 
@@ -177,13 +205,13 @@ contains
 
     i = 0
     ipn = 1
-    do k = 1, n_j_orbitals_pn
-       nhwn(k) = 2*n_orbitals(k) + l_orbitals(k)
+    do k = 1, n_jorb_pn
+       nhwn(k) = 2*norb(k) + lorb(k)
     end do
 
-    call lowest_hw(j_orbitalsn(:n_j_orbitals(1),1), nhwn(:n_j_orbitals(1)),  &
+    call lowest_hw(jorbn(:n_jorb(1),1), nhwn(:n_jorb(1)),  &
          n_ferm(1), l1, h1)
-    call lowest_hw(j_orbitalsn(:n_j_orbitals(2),2), nhwn(n_j_orbitals(1)+1:), &
+    call lowest_hw(jorbn(:n_jorb(2),2), nhwn(n_jorb(1)+1:), &
          n_ferm(2), l2, h2)
     lhw = l1 + l2
     hhw = h1 + h2
@@ -203,8 +231,8 @@ contains
           cycle
        end if
        nhw_occ(i) = &
-            & sum(nhwn(:n_j_orbitals(1))   * ptn%pn(1)%nocc(:, idpn(1)) ) &
-            + sum(nhwn(n_j_orbitals(1)+1:) * ptn%pn(2)%nocc(:, idpn(2)) )    
+            & sum(nhwn(:n_jorb(1))   * ptn%pn(1)%nocc(:, idpn(1)) ) &
+            + sum(nhwn(n_jorb(1)+1:) * ptn%pn(2)%nocc(:, idpn(2)) )    
     end do
 
     allocate( nhw_ratio(lhw:hhw) )
@@ -244,16 +272,16 @@ contains
       end do
     end subroutine sum_nhw_ratio
 
-    subroutine lowest_hw(j_orbitalsn, nhwn, nf, lhw, hhw)
-      integer, intent(in) :: j_orbitalsn(:), nhwn(:), nf
+    subroutine lowest_hw(jorbn, nhwn, nf, lhw, hhw)
+      integer, intent(in) :: jorbn(:), nhwn(:), nf
       integer, intent(out) :: lhw, hhw
       integer, allocatable :: t(:)
       integer :: i, j, n
-      n = sum(j_orbitalsn(:)+1)
+      n = sum(jorbn(:)+1)
       allocate( t(n) )
       n = 0
-      do i = 1, size(j_orbitalsn)
-         do j = 1, j_orbitalsn(i)+1
+      do i = 1, size(jorbn)
+         do j = 1, jorbn(i)+1
             n = n + 1
             t(n) = nhwn(i)
          end do
@@ -352,7 +380,7 @@ contains
     integer, intent(in) :: orbs(:)
     type(type_ptn_pn), pointer :: ptn
     integer :: i, j, k, idpn(2), id, ipn, n, npn(2), maxn, &
-         n_orbitalss_pn(maxval(n_j_orbitals), 2)
+         norbs_pn(maxval(n_jorb), 2)
     integer, allocatable :: n_ptn(:,:)
     real(8), allocatable :: olp(:), olpt(:)
 
@@ -360,15 +388,15 @@ contains
     
     npn(:) = 0
     maxn = 0
-    n_orbitalss_pn(:,:) = 0
+    norbs_pn(:,:) = 0
     do i = 1, size(orbs)
        k = orbs(i)
        if (k==0) cycle
-       maxn = maxn + j_orbitals(k) + 1
-       ipn = (isospin_orbitals(k) + 3) / 2
-       if (ipn==2) k = k - n_j_orbitals(1)
+       maxn = maxn + jorb(k) + 1
+       ipn = (itorb(k) + 3) / 2
+       if (ipn==2) k = k - n_jorb(1)
        npn(ipn) = npn(ipn) + 1 
-       n_orbitalss_pn(npn(ipn), ipn) = k
+       norbs_pn(npn(ipn), ipn) = k
     end do
 
     allocate( n_ptn( max(ptn%pn(1)%n_id, ptn%pn(2)%n_id), 2) )
@@ -378,7 +406,7 @@ contains
           n_ptn(id, ipn) = 0
           do j = 1, npn(ipn)
              n_ptn(id, ipn) = n_ptn(id, ipn) &
-                  + ptn%pn(ipn)%nocc( n_orbitalss_pn(j, ipn), id )
+                  + ptn%pn(ipn)%nocc( norbs_pn(j, ipn), id )
           end do
        end do
     end do
