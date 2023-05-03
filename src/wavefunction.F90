@@ -53,52 +53,23 @@ contains
     self%p = 1.d0 / sqrt(dot_product_global(self, self)) * self%p
   end subroutine wf_random_vec
 
-  function dot_product_global(self, rwf) result (r)
-    ! <self|rwf>  self and rwf are global vectors
-    !  "r" should be real(8), not real(kwf)
-    type(type_vec_p), intent(in) :: self, rwf
-    real(8) :: r, x
-    integer(kdim) :: mq
-    real(16) :: q, y, qg(nprocs)
+   function dot_product_global(self, rwf) result (res)
+      ! <self|rwf>  self and rwf are global vectors
+      !  "r" should be real(8), not real(kwf)
+      type(type_vec_p), intent(in) :: self, rwf
+      real(8) :: res, rank_res
+      integer(kdim) :: idx
 
-!    if (.not. associated(self%ptn, rwf%ptn)) stop "ERROR: dot_product_global"
-
-    if (.false. .and. kwf==8) then
-!    if (kwf==8) then
-       ! real(16) sum ... slow at SPARC
-       q = 0.q0
-       !$omp parallel do private(mq) reduction (+: q)
-       do mq = 1, size(self%p, kind=kdim)
-          q = q + self%p(mq) * rwf%p(mq)
-       end do
+      res = 0.d0
+      !$omp parallel do private(idx) reduction (+: res)
+      do idx = 1, size(self%p, kind=kdim)
+         res = res + self%p(idx) * rwf%p(idx)
+      end do
 #ifdef MPI
-       y = q
-#ifdef SPARC
-       call mpi_allreduce(y, q, 1, mpi_real16, mpi_sum, &
-            mpi_comm_world, ierr)
-#else /* ad hoc solution */
-       call mpi_allgather(y, 16, mpi_byte, qg, 16, mpi_byte, &
-            mpi_comm_world, ierr)
-       q = sum(qg)
-#endif /* SPARC */
-       if (ierr/=0) write(*,*) "failed mpi_allreduce real16"
-#endif /* MPI */
-       r = q
-       return
-    end if
-
-    r = 0.d0
-    !$omp parallel do private(mq) reduction (+: r)
-    do mq = 1, size(self%p, kind=kdim)
-!    do mq = 1, self%ptn%local_dim
-       r = r + self%p(mq) * rwf%p(mq)
-    end do
-#ifdef MPI
-    x = r
-    call mpi_allreduce(x, r, 1, mpi_real8, mpi_sum, &
-         mpi_comm_world, ierr)
+      rank_res = res
+      call mpi_allreduce(x, res, 1, mpi_real8, mpi_sum, mpi_comm_world, ierr)
 #endif
-  end function dot_product_global
+   end function dot_product_global
 
 
   subroutine ex_occ_orb(self, occ)
