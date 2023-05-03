@@ -157,23 +157,13 @@ program kshell
 
 #ifdef MPI
     is_mpi = .true.
-#if defined (_OPENMP) && defined(SPARC) 
-        required = mpi_thread_serialized
-        call mpi_init_thread(required, provided, ierr)
-        if (provided < required) write(*,*) "***** warning in mpi_init_thread *****"
-#else
-        call mpi_init(ierr)
-#endif 
+    call mpi_init(ierr)
     call mpi_comm_size(mpi_comm_world, nprocs, ierr)
     call mpi_comm_rank(mpi_comm_world, myrank, ierr)
-    ! write(*,'(1a,1i5,1a,1i5 )') "nprocs",nprocs,"    myrank", myrank
     if (myrank == 0) write(*,'(1a,1i5,1a,1i5 )') "nprocs",nprocs,"    myrank", myrank
     if (myrank /= 0) is_debug = .false.
 #endif
-    !$ if (myrank==0) write(*,'(1a,1i3,/)') "OpenMP  # of threads=", omp_get_max_threads()
-
     call set_seed()
-    ! call set_seed(is_clock=.true.)
     call set_rank_seed(myrank)
 
     ! default parameters -------------
