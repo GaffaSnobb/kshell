@@ -2609,24 +2609,24 @@ contains
   
   !---------------------------------------------------------------------
 
-  subroutine ex_val(self, v, op, r, vr)
-    ! expectation value, <v| op |v> (option: <v|op|vr>
-    type(type_bridge_partitions), intent(inout) :: self
-    type(type_vec_p), intent(inout) :: v
-    type(type_vec_p), intent(inout), optional :: vr
-    type(opr_m), intent(inout) :: op
-    real(8), intent(out) :: r
-    type(type_vec_p) :: vt
+   subroutine ex_val(self, v, op, r, vr)
+      ! expectation value, <v| op |v> (option: <v|op|vr>
+      type(type_bridge_partitions), intent(inout) :: self
+      type(type_vec_p), intent(inout) :: v
+      type(type_vec_p), intent(inout), optional :: vr
+      type(opr_m), intent(inout) :: op
+      real(8), intent(out) :: r
+      type(type_vec_p) :: vt
 
-    call wf_alloc_vec(vt, self%ptnl)
-    if (present(vr)) then
-       call bp_operate(self, vt, op, vr)
-    else
-       call bp_operate(self, vt, op, v)
-    end if
-    r = dot_product_global(vt, v)
-    call deallocate_l_vec(vt%p)
-  end subroutine ex_val
+      call wf_alloc_vec(vt, self%ptnl)
+      if (present(vr)) then
+         call bp_operate(self, vt, op, vr)
+      else
+         call bp_operate(self, vt, op, v)
+      end if
+      r = dot_product_global(vt, v)
+      call deallocate_l_vec(vt%p)
+   end subroutine ex_val
 
 
   subroutine eig_residual(self, eig, v, op, r)
