@@ -4,8 +4,9 @@
 # usage: gen_partiton.py hoge.snt #proton #neutron parity
 #
 
-import sys, operator, random, os.path
+import sys, operator, os.path
 from functools import reduce
+from io import TextIOWrapper
 
 output_ans = ""
 
@@ -60,7 +61,7 @@ def orb2char(n, l, j, tz):
 
 class ModelSpace:
     def __init__(self,
-        valence_p_n: tuple,
+        n_valence_pn: tuple,
         norb: list,
         lorb: list,
         jorb: list,
@@ -69,7 +70,7 @@ class ModelSpace:
         """
         Parameters
         ----------
-        valence_p_n : tuple
+        n_valence_pn : tuple
             Number of valence protons and neutrons. For example, if the
             interaction is USDA and the nucleus is 22Ne, then this
             will be (2, 2).
@@ -107,26 +108,26 @@ class ModelSpace:
             [-1, -1, -1, 1, 1, 1]. -1 corresponds to protons, while 1
             corresponds to neutrons.
         """
-        self.valence_p_n: tuple[int, int] = valence_p_n
+        self.n_valence_pn: tuple[int, int] = n_valence_pn
         self.norb: list[int] = norb
         self.lorb: list[int] = lorb
         self.jorb: list[int] = jorb
         self.itorb: list[int] = itorb
         self.parityorb: list[int] = [(-1)**l for l in lorb]
 
-        self.norb_pn = [
+        self.norb_pn: list[list[int]] = [
             [n for n, t in zip(norb, itorb) if t == -1],
             [n for n, t in zip(norb, itorb) if t == 1],
         ]
-        self.lorb_pn = [
+        self.lorb_pn: list[list[int]] = [
             [l for l, t in zip(lorb, itorb) if t == -1],
             [l for l, t in zip(lorb, itorb) if t == 1],
         ]
-        self.jorb_pn = [    # Make separate jorb lists for protons and neutrons.
+        self.jorb_pn: list[list[int]] = [    # Make separate jorb lists for protons and neutrons.
             [j for j, t in zip(jorb, itorb) if t == -1],
             [j for j, t in zip(jorb, itorb) if t == 1],
         ]
-        self.iporb_pn = [
+        self.parityorb_pn: list[list[int]] = [
             [p for p, t in zip(self.parityorb, itorb) if t == -1],
             [p for p, t in zip(self.parityorb, itorb) if t == 1],
         ]
@@ -136,8 +137,8 @@ class ModelSpace:
         self.phtrunc_maxt_pn = []
         self.phtrunc_mint_pn = []
 
-        self.minhw, self.maxhw = 0, 0
-        self.hworb_pn = [
+        self.minhw, self.maxhw = 0, 0   # Used for limiting the possible proton-neutron configuration combinations based on the hw truncation.
+        self.hworb_pn: list[list[int]] = [
             [0 for t in self.itorb if t == -1 ],
             [0 for t in self.itorb if t == 1],
         ]
@@ -180,8 +181,16 @@ class ModelSpace:
             self.hworb_pn = [
                 [2*n + l for n, l, t in zip(self.norb, self.lorb, self.itorb) if t == tz ] for tz in (-1, 1)
             ]
-        
-        lowest_pn, highest_pn = self.cal_hw_low_high_pn(self.valence_p_n)
+        # if is_hw_exct:
+            # self.hworb_pn = []
+            # for tz in (-1, 1):
+            #     tmp_list = []
+            #     for n, l, t in zip(self.norb, self.lorb, self.itorb):
+            #         if t == tz:
+            #             tmp_list.append(2*n + l)
+            #     self.hworb_pn.append(tmp_list)
+
+        lowest_pn, highest_pn = self.cal_hw_low_high_pn(self.n_valence_pn)
         
         if is_hw_exct:
             self.minhw += sum(lowest_pn)
@@ -206,7 +215,7 @@ class ModelSpace:
                 [ [mask[i] for i,t in enumerate(self.itorb) if t==-1], 
                   [mask[i] for i,t in enumerate(self.itorb) if t== 1] ] )
 
-        lowest_pn, highest_pn = self.cal_phtrunc_t_low_high_pn(self.valence_p_n)
+        lowest_pn, highest_pn = self.cal_phtrunc_t_low_high_pn(self.n_valence_pn)
 
         self.phtrunc_maxt_pn = [
             ( min( pht[1]-lpn[1], hpn[0] ) , min( pht[1]-lpn[0], hpn[1] ) ) 
@@ -230,10 +239,10 @@ class ModelSpace:
         #           max( self.phtrunc_t[i][0] - highest_pn[i][0], 
         #                lowest_pn[i][1] ) ) )
 
-    def set_monopole_truncation(self, model_space_filename, thd_energy):
+    def set_monopole_truncation(self, filename_interaction, thd_energy):
         self.is_monopole_trunc = True
         from espe import SMInt
-        self.SMInt = SMInt(model_space_filename)
+        self.SMInt = SMInt(filename_interaction)
         self.monopole_e_thd = thd_energy
 
     def gen_ptn_pn(self):
@@ -295,7 +304,7 @@ class ModelSpace:
                 sublist for each major shell. Hence, USDA will only have
                 one sublist while sdpf-mu has two.
             """
-            # if self.valence_p_n == 0:
+            # if self.n_valence_pn == 0:
             if n_valence == 0:
                 """
                 Some combinations of interaction and nucleus might have
@@ -350,7 +359,7 @@ class ModelSpace:
 
             orb_nhw = [ sum(arr) for arr in orb_hw ]    # Sum the max occupation number for each major shell.
             hw_nocc = []
-            for arr in self.gen_nocc(orb_nhw, self.valence_p_n[tz]):
+            for arr in self.gen_nocc(orb_nhw, self.n_valence_pn[tz]):
                 nhw = sum( hw*n for hw,n in zip(hw_list, arr))
                 if nhw > self.maxhw_pn[tz]: continue
                 if nhw < self.minhw_pn[tz]: continue
@@ -381,21 +390,66 @@ class ModelSpace:
                     hw_nocc = [(2,)]
                     hw_nocc = [(2,)]
                 """
-                for arr in gen_hw_nocc(orb_hw, hwnocc, n_valence=self.valence_p_n[tz]):
+                for arr in gen_hw_nocc(orb_hw, hwnocc, n_valence=self.n_valence_pn[tz]):
                     if check_trunc_pn( arr ):
                         self.ptn_pn[tz].append( arr )
             self.ptn_pn[tz].sort()
 
     def ptn_combined(self, parity):
         # parity
-        self.ptn_pn_parity = [
-            [reduce(operator.mul, [p**n for p, n in zip(self.iporb_pn[tz], arr)] + [1]) for arr in self.ptn_pn[tz]] for tz in range(2)
-        ]
+        # self.ptn_pn_parity = [
+        #     [reduce(operator.mul, [p**n for p, n in zip(self.parityorb_pn[tz], arr)] + [1]) for arr in self.ptn_pn[tz]] for tz in range(2)
+        # ]
+        self.ptn_pn_parity: list[list[int]] = []    # List of two lists, one for protons and one for neutrons, each containing the parity of each configuration.
+
+        for isospin in range(2):
+            """
+            Isospin is 0 for protons and 1 for neutrons.
+            """
+            configuration_parity: list[int] = []    # To store the parity of each configuration.
+
+            for configuration in self.ptn_pn[isospin]:
+                """
+                Calculate the parity of each configuration.
+                `configuration` is a list of occupation numbers for each 
+                orbital.
+                """
+                occupation_parity: list[int] = []
+
+                for p, occupation in zip(self.parityorb_pn[isospin], configuration):
+                    """
+                    Take the parity of each orbital to the power of the
+                    number of particles in that orbital, giving the
+                    parity of each orbital occupation.
+                    """
+                    occupation_parity.append(p**occupation)
+                
+                occupation_parity.append(1)  # In case the list is empty?
+                configuration_parity.append(reduce(operator.mul, occupation_parity))    # This is where the parity of the configuration is calculated.
+            
+            self.ptn_pn_parity.append(configuration_parity)
+
         # hw 
-        self.ptn_pn_hw = [ 
-            [ sum( self.hworb_pn[tz][i]*arr[i] for i in range(len(arr)))
-              for arr in self.ptn_pn[tz] ]
-            for tz in range(2) ]
+        # self.ptn_pn_hw = [ [ sum( self.hworb_pn[tz][i]*arr[i] for i in range(len(arr))) for arr in self.ptn_pn[tz] ] for tz in range(2) ]
+
+        self.ptn_pn_hw: list[list[int]] = [] # List of two lists, one for protons and one for neutrons
+
+        for isospin in range(2):
+            tmp_list = []
+            
+            for configuration in self.ptn_pn[isospin]:
+                sum_elements = 0
+                
+                # for i in range(len(configuration)):
+                #     sum_elements += self.hworb_pn[isospin][i]*configuration[i]
+
+                for hw_idx, occupation in zip(self.hworb_pn[isospin], configuration):
+                    sum_elements += hw_idx*occupation
+                
+                tmp_list.append(sum_elements)
+            
+            self.ptn_pn_hw.append(tmp_list)
+
         # p-h truncation
         ptn_pn_phtrunc_t = []
         for orb, t in zip(self.phtrunc_orb, self.phtrunc_t):
@@ -417,16 +471,45 @@ class ModelSpace:
             #         for arr in self.ptn_pn[tz] ] 
             #       for tz in range(2) ] )
             
-        def check_trunc(i_p, i_n):
-            # parity
-            if self.ptn_pn_parity[0][i_p] * self.ptn_pn_parity[1][i_n] \
-               != parity: return False
+        def check_trunc(p_idx: int, n_idx: int) -> bool:
+            """
+            Check if the combination of proton configuration `p_idx` and
+            neutron configuration `n_idx` satisfies the truncation
+            conditions.
+
+            Parameters
+            ----------
+            p_idx : int
+                Index of the proton configuration.
+
+            n_idx : int
+                Index of the neutron configuration.
+
+            Returns
+            -------
+            bool
+                True if the truncation conditions are satisfied, False
+                otherwise.
+            """
+            if self.ptn_pn_parity[0][p_idx]*self.ptn_pn_parity[1][n_idx] != parity:
+                """
+                Parity of the proton configuration times the parity of
+                the neutron configuration must equal the parity of the
+                partition file.
+                """
+                return False
+
             # hw excitation
-            hw = self.ptn_pn_hw[0][i_p] + self.ptn_pn_hw[1][i_n]
-            if not self.minhw <= hw <= self.maxhw: return False
-            # ph trunc 
+            hw = self.ptn_pn_hw[0][p_idx] + self.ptn_pn_hw[1][n_idx]
+            if not self.minhw <= hw <= self.maxhw:
+                """
+                
+                """
+                return False
+            
+            # ph trunc
             for tpn, t in zip(ptn_pn_phtrunc_t, self.phtrunc_t):
-                n = tpn[0][i_p] + tpn[1][i_n]
+                n = tpn[0][p_idx] + tpn[1][n_idx]
                 if not t[0] <= n <= t[1]: 
                     return False
             return True
@@ -452,12 +535,19 @@ class ModelSpace:
                     print('PASS partition', nocc, ' : %10.5f' % e)
             return
                 
-        
-            
-        self.ptn_list = [ (i, j)
-                          for i in range(len(self.ptn_pn[0]))
-                          for j in range(len(self.ptn_pn[1]))
-                          if check_trunc(i, j) ]
+        # self.ptn_list = [ (i, j) for i in range(len(self.ptn_pn[0])) for j in range(len(self.ptn_pn[1])) if check_trunc(i, j) ]
+
+        self.ptn_list: list[tuple[int, int]] = []
+        for p_idx in range(len(self.ptn_pn[0])):
+            """
+            Loop over all proton and neutron indices and check if the
+            truncation conditions are satisfied. If so, add the indices
+            to the list of allowed proton-neutron configurations.
+            """
+            for n_idx in range(len(self.ptn_pn[1])):
+                
+                if check_trunc(p_idx, n_idx):
+                    self.ptn_list.append((p_idx, n_idx))
 
     def strip_ptn_pn(self):
         is_ptn_pn = [ [False,]*len(self.ptn_pn[0]),  
@@ -484,53 +574,109 @@ class ModelSpace:
             ptn_list.append( (ni, nj) )
         self.ptn_list = ptn_list
                                   
-    def write_ptn_pn(self, fp, parity, model_space_filename):
-        # output partition of proton and neutron separately
-        fp.write( "# partition file of %s  Z=%d  N=%d  parity=%+d\n" 
-                  % (model_space_filename, self.valence_p_n[0], self.valence_p_n[1], parity ) )
-        fp.write( " %d %d %d\n" % (self.valence_p_n[0], self.valence_p_n[1], parity) )
+    def write_ptn_pn(self,
+        fp: TextIOWrapper,
+        parity: int,
+        filename_interaction: str,
+    ):
+        """
+        Write the proton and neutron partitions to the partition file.
+
+        Parameters
+        ----------
+        fp : TextIOWrapper
+            The file pointer of the partition file.
+
+        parity : int
+            The parity of the partition.
+
+        filename_interaction : str
+            The filename of the interaction file.
+        """
+        # fp.write( "# partition file of %s  Z=%d  N=%d  parity=%+d\n" % (filename_interaction, self.n_valence_pn[0], self.n_valence_pn[1], parity ) )
+        # fp.write( " %d %d %d\n" % (self.n_valence_pn[0], self.n_valence_pn[1], parity) )
+        # fp.write( " %d %d\n" % (len(self.ptn_pn[0]), len(self.ptn_pn[1]) ))
+        fp.write(f"# partition file of {filename_interaction}  Z={self.n_valence_pn[0]}  N={self.n_valence_pn[1]}  parity={parity}\n")
+        fp.write(f" {self.n_valence_pn[0]} {self.n_valence_pn[1]} {parity}\n")
         fp.write( "# num. of  proton partition, neutron partition\n" )
-        fp.write( " %d %d\n" % (len(self.ptn_pn[0]), len(self.ptn_pn[1]) ))
+        fp.write(f" {len(self.ptn_pn[0])} {len(self.ptn_pn[1])}\n")
+        
         for tz in range(2):
-            if tz==0: fp.write( "# proton partition\n" )
-            if tz==1: fp.write( "# neutron partition\n" )
+            """
+            Isospin (tz) 0 is proton and 1 is neutron
+            """
+            if tz == 0: fp.write( "# proton partition\n" )
+            if tz == 1: fp.write( "# neutron partition\n" )
+            
             for i, arr in enumerate(self.ptn_pn[tz]):
-                fp.write( " %5d   " % (i+1,) )
+                """
+                `i` is the index of the partition. `arr` is the
+                occupation numbers for a specific configuration.
+                """
+                # fp.write( " %5d   " % (i+1,) )
+                fp.write(f" {i+1:5d}   ")
+                
                 for a in arr:
-                    fp.write( " %2d" % (a,) )
+                    # fp.write( " %2d" % (a,) )
+                    fp.write(f" {a:2d}")
+                
                 fp.write("\n")
 
-    def write_ptn_combined(self, fp):
+    def write_ptn_combined(self, fp: TextIOWrapper):
+        """
+        Write the combinations of proton and neutron partitions to the
+        partition file.
+
+        Parameters
+        ----------
+        fp : TextIOWrapper
+            The file pointer of the partition file.
+        """
         fp.write( "# partition of proton and neutron\n" )
         out = ""
         nline = len(self.ptn_list)
-        # random.shuffle(ptn_list)  # shuffle order of p-n partitions
-        out=""
-        for i,j in self.ptn_list:
-            out += "%5d %5d\n" % (i+1, j+1)
+        
+        if nline == 0:
+            sys.stdout.write( "\n *** WARNING NO PARTITION *** \n" )
+        
+        for i, j in self.ptn_list:
+            # out += "%5d %5d\n" % (i+1, j+1)
+            out += f"{i+1:5d} {j+1:5d}\n"
+        
         fp.write( "%d\n" % (nline,) )
         fp.write( out )
-        if len(self.ptn_list)==0: 
-            sys.stdout.write( "\n *** WARNING NO PARTITION *** \n" )
 
-    def cal_hw_low_high_pn(self, valence_p_n: tuple[int, int]):
+    def cal_hw_low_high_pn(self, n_valence_pn: tuple[int, int]):
         """
         total hw excitation of the lowest and highest configuration
 
         Parameters
         ----------
-        valence_p_n : tuple[int, int]
+        n_valence_pn : tuple[int, int]
             The number of valence protons and neutrons.
         """
         nhw = [ [], [] ]
-        for tz in range(2):
-            for i in range(len(self.jorb_pn[tz])):
-                nhw[tz] += [ self.hworb_pn[tz][i], ]*(self.jorb_pn[tz][i] + 1)
-        for tz in range(2): nhw[tz].sort()
-        return ( sum(nhw[0][:valence_p_n[0]]), sum(nhw[1][:valence_p_n[1]]) ), \
-            ( sum(nhw[0][-valence_p_n[0]:]), sum(nhw[1][-valence_p_n[1]:]) )
+        
+        for isospin in range(2):
+            for i in range(len(self.jorb_pn[isospin])):
+                """
+                NOTE: `self.jorb_pn` contains the total angular momentum
+                of the orbitals. `self.jorb_pn[0]` is the j list for
+                protons and `self.jorb_pn[1]` is the j list for
+                neutrons.
 
-    def cal_phtrunc_t_low_high_pn(self, valence_p_n):
+                `self.hworb_pn` contains the harmonic oscillator quanta
+                of the orbitals.
+                """
+                # nhw[isospin] += [ self.hworb_pn[isospin][i], ]*(self.jorb_pn[isospin][i] + 1)
+                nhw[isospin].extend([self.hworb_pn[isospin][i]]*(self.jorb_pn[isospin][i] + 1))
+        
+        for isospin in range(2): nhw[isospin].sort()
+        print(f"{nhw = }")
+        print(f"{sum(nhw[0][:n_valence_pn[0]]) = }")
+        return ( sum(nhw[0][:n_valence_pn[0]]), sum(nhw[1][:n_valence_pn[1]]) ), ( sum(nhw[0][-n_valence_pn[0]:]), sum(nhw[1][-n_valence_pn[1]:]) )
+
+    def cal_phtrunc_t_low_high_pn(self, n_valence_pn):
         lowest_pn = []
         highest_pn = []
         for mask_pn in self.phtrunc_mask_pn:
@@ -539,15 +685,15 @@ class ModelSpace:
                 for i in range(len(self.jorb_pn[tz])):
                     nhw[tz] += [ mask_pn[tz][i], ]*(self.jorb_pn[tz][i]+1) 
             for tz in range(2): nhw[tz].sort()
-            lowest_pn.append((sum(nhw[0][:valence_p_n[0]]),sum(nhw[1][:valence_p_n[1]])))
-            highest_pn.append((sum(nhw[0][-valence_p_n[0]:]),sum(nhw[1][-valence_p_n[1]:])))
+            lowest_pn.append((sum(nhw[0][:n_valence_pn[0]]),sum(nhw[1][:n_valence_pn[1]])))
+            highest_pn.append((sum(nhw[0][-n_valence_pn[0]:]),sum(nhw[1][-n_valence_pn[1]:])))
         return lowest_pn, highest_pn
 
-    def gen_nocc(self, nlist, valence_p_n: int):
+    def gen_nocc(self, nlist, n_valence_pn: int):
         """
         Parameters
         ----------
-        valence_p_n : int
+        n_valence_pn : int
             The number of valence protons or neutrons.
         Returns
         -------
@@ -559,34 +705,34 @@ class ModelSpace:
             [(12, 3), (11, 4), (10, 5), (9, 6), (8, 7), (7, 8), (6, 9),
             (5, 10), (4, 11), (3, 12), (2, 13), (1, 14), (0, 15)]
         """
-        if valence_p_n == 0: 
+        if n_valence_pn == 0: 
             yield (0,)*len(nlist)
             return
         if len(nlist) == 1:
-            yield (valence_p_n,)
+            yield (n_valence_pn,)
             return
         ns, nrest = nlist[0], nlist[1:]
-        # for i in range(max(0, valence_p_n-sum(nrest)), min(ns, valence_p_n)+1): 
-        for i in range(min(ns, valence_p_n), max(0, valence_p_n - sum(nrest)) -1, -1): 
-            for j in self.gen_nocc(nrest, valence_p_n - i):
+        # for i in range(max(0, n_valence_pn-sum(nrest)), min(ns, n_valence_pn)+1): 
+        for i in range(min(ns, n_valence_pn), max(0, n_valence_pn - sum(nrest)) -1, -1): 
+            for j in self.gen_nocc(nrest, n_valence_pn - i):
                 yield (i,) + j
 
 def main(
-    model_space_filename: str,
-    partition_filename: str,
-    valence_p_n: tuple,
+    filename_interaction: str,
+    filename_partition: str,
+    n_valence_pn: tuple,
     parity: int
     ):
     """
     Parameters
     ----------
-    model_space_filename:
+    filename_interaction:
         The filename of the model space (.snt) file.
 
-    partition_filename:
+    filename_partition:
         The filename of the partition (.ptn) file.
 
-    valence_p_n:
+    n_valence_pn:
         Tuple containing the number of valence protons and neutrons.
         Example: (#p, #n).
     
@@ -595,9 +741,9 @@ def main(
     """
     
     try:
-        fp = open(model_space_filename, 'r')
+        fp = open(filename_interaction, 'r')
     except FileNotFoundError:
-        print(f"File '{model_space_filename=}' not found")
+        print(f"File '{filename_interaction=}' not found")
         sys.exit()
     
     n_jorb, n_core = [0, 0], [0, 0]
@@ -624,9 +770,9 @@ def main(
     fp.close()
 
     class_ms = ModelSpace(
-        valence_p_n, norb, lorb, jorb, itorb
+        n_valence_pn, norb, lorb, jorb, itorb
     )
-    # print(f"{valence_p_n = }")
+    # print(f"{n_valence_pn = }")
     # print(f"{norb = }")
     # print(f"{lorb = }")
     # print(f"{jorb = }")
@@ -634,11 +780,11 @@ def main(
     # return
 
     # parity check
-    prty_list = [ set(ip) for ip in class_ms.iporb_pn ]
+    prty_list = [ set(ip) for ip in class_ms.parityorb_pn ]
     for i in range(2): 
-        if valence_p_n[i] % 2 == 0 and prty_list[i] == set([-1]): 
+        if n_valence_pn[i] % 2 == 0 and prty_list[i] == set([-1]): 
             prty_list[i] = set( [1] )
-        if valence_p_n[i] == 0: prty_list[i] = set( [1] )
+        if n_valence_pn[i] == 0: prty_list[i] = set( [1] )
 
     if parity == 1:
         if not (1 in prty_list[0] and 1 in prty_list[1] ) \
@@ -655,7 +801,7 @@ def main(
     else:
         raise "illegal input"
 
-    fpout = open(partition_filename, 'w')
+    fpout = open(filename_partition, 'w')
 
     print(" truncation scheme ?\n" \
         + "      0 : No truncation (default) \n" \
@@ -738,7 +884,7 @@ def main(
         thd = float(ans)
         fpout.write( "# monopole-based partition truncation, thd= %10.5f\n"
                      %  thd)
-        class_ms.set_monopole_truncation(model_space_filename, thd)
+        class_ms.set_monopole_truncation(filename_interaction, thd)
 
     sys.stdout.write( "generating partition file ..." )
     sys.stdout.flush()
@@ -746,7 +892,7 @@ def main(
     class_ms.gen_ptn_pn()
 
     sys.stdout.write( "..." )
-    if class_ms.is_monopole_trunc:     sys.stdout.write( "\n" )
+    if class_ms.is_monopole_trunc: sys.stdout.write( "\n" )
     sys.stdout.flush()
 
     class_ms.ptn_combined(parity)
@@ -759,16 +905,15 @@ def main(
     sys.stdout.write( "..." )
     sys.stdout.flush()
 
-    class_ms.write_ptn_pn(fpout, parity, model_space_filename)
+    class_ms.write_ptn_pn(fpout, parity, filename_interaction)
     class_ms.write_ptn_combined(fpout)
 
     sys.stdout.write( " done.\n" )
     if class_ms.is_monopole_trunc:
-        print('\nminimum energy for partition %10.5f, threashold %10.5f\n'\
+        print('\nminimum energy for partition %10.5f, threshold %10.5f\n'\
             % (class_ms.min_eocc, class_ms.monopole_e_thd))
 
     fpout.close()
-
     ret = None
     if 'orb_list' in locals():
         # orbit list in the first truncation
@@ -784,8 +929,8 @@ if __name__ == "__main__":
 
     if os.path.exists(sys.argv[2]): raise "partition file exists"
 
-    model_space_filename, fn_out = sys.argv[1], sys.argv[2]
-    valence_p_n = (int(sys.argv[3]), int(sys.argv[4]))
+    filename_interaction, fn_out = sys.argv[1], sys.argv[2]
+    n_valence_pn = (int(sys.argv[3]), int(sys.argv[4]))
     parity = 1
     if len(sys.argv) > 5: 
         if   sys.argv[5] == "+": parity =  1
@@ -794,4 +939,4 @@ if __name__ == "__main__":
 
     if not parity in (1, -1): raise "parity error"
 
-    main(model_space_filename, fn_out, valence_p_n, parity)
+    main(filename_interaction, fn_out, n_valence_pn, parity)
