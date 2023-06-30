@@ -10,7 +10,8 @@
 
 import sys
 import numpy as np
-from kshell_ui import element
+# from kshell_ui import element
+from parameters import element
 
 
 # order of filling occupation (n, l, j)
