@@ -4,9 +4,11 @@
 ! Phys. Rev. C 85, 064324 (2012)
 !
 ! default input parameters 
+!namelist hw_type = 2
 !namelist eff_charge = 1.26, 0.21
 !
-! 
+! fitted for (0-3) hbar-omega model space with p-sd shell
+!
 ! model space 
    5   5     2   2
     1     0   1   1  -1  !   1 = p 0p_ 1/2
