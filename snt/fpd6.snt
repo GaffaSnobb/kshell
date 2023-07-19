@@ -2,6 +2,10 @@
 ! W. A. Richter, M. J. Van Der Merwe, R. E. Julies, and B. A. Brown,
 !  Nucl. Phys. A523, 325 (1991)
 !
+! default input parameters 
+!namelist eff_charge = 1.23, 0.54
+!namelist orbs_ratio = 2, 3, 4, 6, 7, 8
+!
 ! model space
    4   4    20  20
    1       0   3   7  -1    !  1 = p 0f_7/2

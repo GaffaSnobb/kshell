@@ -3,6 +3,10 @@
 !
 ! Y. Utsuno, T. Otsuka, T. Mizusaki, and M. Honma, 
 ! Phys. Rev. C 60, 054315 (1999).
+!
+! default input parameters 
+!namelist eff_charge = 1.3, 0.5
+!namelist hw_type = 2
 ! 
 ! index,    n,  l,  j, tz
    5   5   8   8
