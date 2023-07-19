@@ -1,9 +1,9 @@
 
 KSHELL : nuclear shell model calculation code for K-computer era
 
-KSHELL User's guide   2013/10/22
-       東京大学原子核科学研究センター 清水 則孝 
-       Noritaka SHIMIZU, shimizu@cns.s.u-tokyo.ac.jp
+KSHELL User's guide   2022/6/8
+       筑波大学計算科学研究センター 清水則孝
+       Noritaka SHIMIZU, shimizu@nucl.ph.tsukuba.ac.jp
 
 Thick restrat Lanczos法による M-scheme 殻模型対角化計算コードです。
 OXBASHライクなシェルを備えており、
@@ -23,8 +23,9 @@ Ni56 pf-shell KB3相互作用の基底状態(10億次元の行列対角化に相当)を、
 いかなる形においてもこのソフトウェアを利用する際は、
 下記の文献を引用してください。
 
-N. Shimizu, ``Nuclear shell-model code for massive parallel computation, KSHELL'',
-arXiv:1310.5431 [nucl-th] (2013).
+N. Shimizu, T. Mizusaki, T. Utsuno,  and Y. Tsunoda,   Comp. Phys. Comm. 244, 372 (2019)
+    https://doi.org/10.1016/j.cpc.2019.06.011
+
 
 
 
@@ -37,7 +38,6 @@ arXiv:1310.5431 [nucl-th] (2013).
 オプション
 * OpenMP
 * MPI-2 library (MPI-IO)
-* C compiler (経過時間計測のみに使用)
 
 動作確認済環境： 
  Intel Fortran ver.11.1 + Intel MKL
@@ -57,9 +57,7 @@ cd kshell/src
 
 Makefile を環境にあうよう編集(デフォルトは Intel Fortran)
 
-make single # for single processor
-または、
-make mpi    # for MPI parallel
+make 
 
 alias kshell_ui.py=`pwd`/../bin/kshell_ui.py
 
