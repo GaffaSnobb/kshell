@@ -32,7 +32,7 @@ def read_comment_skip(fp):
 if __name__ == "__main__":
 
     if len(sys.argv)==1: 
-        print 'usage: snt2int.py hoge.snt out.int'
+        print('usage: snt2int.py hoge.snt out.int')
         sys.exit(1)
 
     if len(sys.argv) == 3:
@@ -40,7 +40,7 @@ if __name__ == "__main__":
     else:
         # fn_out = sys.argv[1][:-3] + "_" + sys.argv[2][:-4] +".snt"
         fn_out = sys.argv[1][:-4] +".int"
-    print " output file : ", fn_out
+    print(" output file : ", fn_out)
     out = ""
     
     fn_snt = sys.argv[1]
@@ -118,15 +118,15 @@ if __name__ == "__main__":
             if (l1+l2)%2 != (l3+l4)%2: continue # parity
             if max(abs(j1-j2),abs(j3-j4)) > min(j1+j2,j3+j4):
                 continue # triangular condition
-            Jmin = max(abs(j1-j2), abs(j3-j4)) / 2
-            Jmax = min(j1+j2, j3+j4) / 2
+            Jmin = max(abs(j1-j2), abs(j3-j4)) // 2
+            Jmax = min(j1+j2, j3+j4) // 2
             for J in range(Jmin, Jmax + 1):
                 if i == j or k == l:
                     if J % 2 != 0: continue
                 if i==j and ((j1+j2)//2-J+1-T)%2==0: continue
                 if k==l and ((j3+j4)//2-J+1-T)%2==0: continue
                 if not (i,j,k,l,J) in vtb:
-                    print '! WARNING missing TBME in snt  %3d %3d %3d %3d %3d' % (i,j,k,l,J)
+                    print('! WARNING missing TBME in snt  %3d %3d %3d %3d %3d' % (i,j,k,l,J))
                     vtb_is[(i,j,k,l,J,T)] = 0.
                 else:
                     vtb_is[(i,j,k,l,J,T)] = vtb[(i,j,k,l,J)]
@@ -143,8 +143,8 @@ if __name__ == "__main__":
             if (l1+l2)%2 != (l3+l4)%2: continue # parity
             if max(abs(j1-j2),abs(j3-j4)) > min(j1+j2,j3+j4):
                 continue # triangular condition
-            Jmin = max(abs(j1-j2), abs(j3-j4)) / 2
-            Jmax = min(j1+j2, j3+j4) / 2
+            Jmin = max(abs(j1-j2), abs(j3-j4)) // 2
+            Jmax = min(j1+j2, j3+j4) // 2
             for J in range(Jmin, Jmax + 1):
                 if i == j or k == l:
                     if J % 2 == 0: continue

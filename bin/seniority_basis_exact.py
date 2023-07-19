@@ -1,9 +1,13 @@
-#!/usr/bin/env python
+#!/usr/bin/python
 #
-# generate "seniority_basis.dat", which contains j-scheme basis of single orbit
-#
+# generate "seniority_basis.dat", which contains j-scheme basis of single-j orbit
+#   for convert_m2j.py
+#  
 #  usage: ./seniority_basis_exact.py
+#  require: python3, sympy 
 #
+# Thanks to Yusuke Tsunoda (CNS Tokyo) (2017)
+# 
 
 
 # parameters 
@@ -17,6 +21,9 @@ fb = '<' # little endian for intel CPU
 
 fname = 'seniority_basis.dat'
 
+import sympy, fractions, sys, struct
+from convert_m2j import calc_dim_vj
+
 
 
 # save_memory = True
@@ -25,23 +32,19 @@ save_memory = False
 if not save_memory:
     isqrt_cache={}
 
-
-import sympy, fractions, sys, struct
-from convert_m2j import calc_dim_vj
    
 def isqrt(n):
+    # i = sqrt(n) : assume n = integer**2 
     if not save_memory:
-        if n in isqrt_cache:
-            return isqrt_cache[n]
+        if n in isqrt_cache: return isqrt_cache[n]
     x = n
     if x<=0: return 0
     a,b = divmod(x.bit_length(), 2)
     m = 2**(a+b)
     while True:
-        y = (m+x/m)>>1
+        y = (m + (x//m))>>1
         if y >= m:
-            if not save_memory:
-                isqrt_cache[n] = m
+            if not save_memory: isqrt_cache[n] = m
             return m
         m = y
       
@@ -50,9 +53,12 @@ def fraction_sqrt(x):
         return -fractions.Fraction(isqrt(-x.numerator), isqrt(x.denominator))
     else:
         return  fractions.Fraction(isqrt( x.numerator), isqrt(x.denominator))
+
       
 class Sqrt_fraction:
+    #
     # sgn(fraction)*sqrt(abs(fraction))
+    #
     def __init__(self, fraction):
         self.fraction = fractions.Fraction(fraction)
         
@@ -68,14 +74,15 @@ class Sqrt_fraction:
         else:
             return self.fraction < 0
         
-    def __nonzero__(self):
+    # def __nonzero__(self):
+    def __bool__(self):
         return bool(self.fraction)
     
     def __add__(self, other):
         if not self.fraction:
             return other
         tmp = 1 + fraction_sqrt(other.fraction/self.fraction)
-        if tmp<0:
+        if tmp < 0:
             tmp = Sqrt_fraction(-tmp**2)
         else:
             tmp = Sqrt_fraction( tmp**2)
@@ -85,21 +92,22 @@ class Sqrt_fraction:
         return self+-other
     
     def __mul__(self, other):
-        return Sqrt_fraction(self.fraction*other.fraction)
+        return Sqrt_fraction( self.fraction*other.fraction )
     
-    def __div__(self,other):
-        return Sqrt_fraction(self.fraction/other.fraction)
+    # def __div__(self, other):
+    def __truediv__(self, other):
+        return Sqrt_fraction( self.fraction/other.fraction )
     
-    def __radd__(self,other):
+    def __radd__(self, other):
         return self+other
     
-    def __rsub__(self,other):
+    def __rsub__(self, other):
         return -(self-other)
     
-    def __rmul__(self,other):
+    def __rmul__(self, other):
         return self*other
     
-    def __rdiv__(self,other):
+    def __rdiv__(self, other):
         return Sqrt_fraction(other.fraction/self.fraction)
     
     def __neg__(self):
@@ -227,13 +235,13 @@ def bitwf_jz(a,j):
 def seniority_up(j):
     # return S+
     return dict( ((1<<x)+(1<<(j-x)), Sqrt_fraction((-1)**x))
-                 for x in range((j+1)/2) )
+                 for x in range((j+1)//2) )
    
 def bitwf_szero(a, j):
     # return [S0, a]
     c = {}
     for key in a:
-        s = bin(key).count("1") - (j+1)/2
+        s = bin(key).count("1") - (j+1)//2
         x = fractions.Fraction(s,2)**2
         c[key] = Sqrt_fraction( -x if s<0 else x ) * a[key]
     return strip_bitwf(c)
@@ -258,31 +266,31 @@ def gs_bitwf(bitwfs):
     bitwfs = [x for x in bitwfs if x!={}]
     if not bitwfs: return []
 
-    # pick up v(i) and fix its phase
-    bit = min([x for bitwf in bitwfs for x in bitwf])
+    # pick up v(i) and fix its phase : coef. of min(bit) is positive
+    bit = min( [x for bitwf in bitwfs for x in bitwf] )
     for i in range(len(bitwfs)):
         if bit in bitwfs[i]: break
     a = bitwfs[i]
-    if a[bit] < 0:
-        a = bitwf_times_s(-sf1, a)
+    if a[bit] < 0: a = bitwf_times_s(-sf1, a)
 
-    # |b> = |b> - b(bit)/a(bit) * |a>  ?
+    # |b> = |b> - b(bit)/a(bit) * |a>  to remove min(bit) basis in |b>
     b = bitwfs[:i] + bitwfs[i+1:]
     for i in range(len(b)):
         if bit in b[i]:
-            b[i] = bitwf_add(b[i], bitwf_times_s(-b[i][bit]/a[bit], a))
+            b[i] = bitwf_add(b[i], bitwf_times_s( -b[i][bit]/a[bit], a ))
             
-    b = gs_bitwf(b) # recursive call
-    a = bitwf_ortho(a, b)
-    a = bitwf_times_s(sf1/bitwf_dot(a,a).sqrt(), a)  # normalize
+    b = gs_bitwf(b)   # recursive call, wave functions without |a>
+    a = bitwf_ortho(a, b)                          # orthogonalize
+    a = bitwf_times_s( sf1/bitwf_dot(a,a).sqrt(), a )  # normalize
+    
     return [a]+b
    
 def pair_creation(jpair, j):
-    # pair creation operator with J=jpair in j/2 orbit
+    # pair creation operator of 1/sqrt(2)*[c+ * c+]^{J=jpair} in single-j orbit
     op = {}
     for m1 in range(-j, j+2, 2):
         for m2 in range( max(m1+2,-m1-jpair*2), min(j,-m1+jpair*2)+2, 2 ):
-            op[ (1<<((m1+j)/2)) + (1<<((m2+j)/2)) ] \
+            op[ (1<<((m1+j)//2)) + (1<<((m2+j)//2)) ] \
                 = Sqrt_fraction(2) * \
                 clebsch_gordan_2j(j, j, jpair*2, m2, m1, m1+m2)
     return op
@@ -292,23 +300,25 @@ def bitwf_ortho_j9(bitwfs, bitwfv2):
     # only for j=9/2, v=4, J=4,6
     op = pair_creation(2, 9)
     bitwf = bitwf_times_a(op, bitwfv2) 
-    a = bitwf_add(bitwf_times_s( bitwf_dot(bitwf, bitwf_times_a(op, bitwfs[1])), bitwfs[0]),
-                  bitwf_times_s(-bitwf_dot(bitwf, bitwf_times_a(op, bitwfs[0])), bitwfs[1]))
+    a = bitwf_add( bitwf_times_s( bitwf_dot(bitwf, bitwf_times_a(op, bitwfs[1])),
+                                  bitwfs[0] ),
+                   bitwf_times_s(-bitwf_dot(bitwf, bitwf_times_a(op, bitwfs[0])),
+                                  bitwfs[1] ) )
     a = gs_bitwf([a])[0]
     b = gs_bitwf([bitwf_ortho(bitwfs[0],a)])[0]
-    return [a,b]
+    return [a, b]
    
 def calc_seniority_basis(j):
     # return bitwf_vj[n,v,alpha,2J,2M], dim_vj[v,2J]
     dim_vj = calc_dim_vj(j)
     bitwf_vj = {}
     sup = seniority_up(j)
-    for v in range((j+1)/2+1):
+    for v in range((j+1)//2+1):
         if v==0:
             bitwf_vj[0,0,0,0,0] = {0:sf1}
         else:
             for j1 in [key[1] for key in sorted(dim_vj) if key[0]==v]:
-                print>>sys.stderr, "v=", v, "2j=", j1, "dim=", dim_vj[v,j1]
+                print( "v=", v, "2j=", j1, "dim=", dim_vj[v,j1] )
                 bitwfs = []
                 for j2,alpha in sorted([
                         (key[1], x)
@@ -320,12 +330,12 @@ def calc_seniority_basis(j):
                             if not (v-1,v-1,alpha,j2,j1-m) in bitwf_vj:
                                 bitwf_vj[v-1,v-1,alpha,j2,j1-m] \
                                     = bitwf_times_s(
-                                        sf1/Sqrt_fraction((j2+j1-m+2)*(j2-j1+m)/4),
+                                        sf1/Sqrt_fraction((j2+j1-m+2)*(j2-j1+m)//4),
                                         bitwf_jdown( bitwf_vj[v-1, v-1, alpha, j2, j1-m+2], j ) )
-                        bitwf = bitwf_add( bitwf,bitwf_times_s(
+                        bitwf = bitwf_add( bitwf, bitwf_times_s(
                             clebsch_gordan_2j( j, j2, j1, m, j1-m, j1 ),
-                            bitwf_times_c( {1<<((j+m)/2):sf1},
-                                           bitwf_vj[v-1,v-1,alpha,j2,j1-m]) ))
+                            bitwf_times_c( { 1<<((j+m)//2) : sf1},
+                                           bitwf_vj[v-1,v-1,alpha,j2,j1-m]) ) )
                     bitwf = bitwf_ortho( bitwf,
                                          [ bitwf_vj[key] for key in bitwf_vj
                                            if key[0]==v and key[1]==v-2 and key[3]==key[4]==j1 ] )
@@ -340,26 +350,27 @@ def calc_seniority_basis(j):
                 for i in range(dim_vj[v,j1]):
                     bitwf_vj[v,v,i,j1,j1] = bitwfs[i]
         if save_memory:
-            for key in bitwf_vj.keys():
+            keys = list( bitwf_vj.keys() )
+            for key in keys:
                 if (key[0]!=key[1] and key[0]<=v) or (key[3]!=key[4] and key[0]<v):
                     del bitwf_vj[key]
         for j1 in [key[1] for key in sorted(dim_vj) if key[0]==v]:
             for alpha in range(dim_vj[v,j1]):
-                print>>sys.stderr, "v=",v,"2j=",j1,"dim=",alpha+1,"/",dim_vj[v,j1]
+                print( "v=",v,"2j=",j1,"dim=",alpha+1,"/",dim_vj[v,j1] )
                 if save_memory:
-                    if v+2<=(j+1)/2:
+                    if v+2<=(j+1)//2:
                         bitwf_vj[v+2,v,alpha,j1,j1] \
-                            = bitwf_times_s( sf1/Sqrt_fraction((j+1-v*2)/2),
+                            = bitwf_times_s( sf1/Sqrt_fraction((j+1-v*2)//2),
                                              bitwf_times_c(sup,bitwf_vj[v,v,alpha,j1,j1]) )
                 else:
                     for m1 in range(j1,-j1-2,-2):
                         if m1 != j1:
                             bitwf_vj[v,v,alpha,j1,m1] \
-                                = bitwf_times_s( sf1/Sqrt_fraction((j1+m1+2)*(j1-m1)/4),
+                                = bitwf_times_s( sf1/Sqrt_fraction((j1+m1+2)*(j1-m1)//4),
                                                  bitwf_jdown(bitwf_vj[v,v,alpha,j1,m1+2],j) )
                         for n in range(v+2,j-v+3,2):
                             bitwf_vj[n,v,alpha,j1,m1] \
-                                = bitwf_times_s( sf1/Sqrt_fraction((n-v)*(j-n-v+3)/4),
+                                = bitwf_times_s( sf1/Sqrt_fraction((n-v)*(j-n-v+3)//4),
                                                  bitwf_times_c(sup, bitwf_vj[n-2,v,alpha,j1,m1]) )
     return bitwf_vj, dim_vj
    
@@ -379,27 +390,27 @@ def check_seniority_basis(bitwf_vj, dim_vj, j):
                           bitwf_szero( bitwf_szero(bitwf_vj[key],j), j) )
         jj = bitwf_dot(jjwf, bitwf_vj[key])
         ss = bitwf_dot(sswf, bitwf_vj[key])
-        print "n=%2i v=%1i alpha=%2i/%2i j=%4s m=%5s: jj=%s ss=%s" % \
-            ( key[0], key[1], key[2]+1, dim_vj[key[1],key[3]],
-              "%2i"%(key[3]/2) if key[3]%2==0 else "%2i/2"%key[3],
-              "%3i"%(key[4]/2) if key[4]%2==0 else "%3i/2"%key[4],
-              str(jj.sqrt().fraction), str(ss.sqrt().fraction) )
+        print( "n=%2i v=%1i alpha=%2i/%2i j=%4s m=%5s: jj=%s ss=%s" % \
+               ( key[0], key[1], key[2]+1, dim_vj[key[1],key[3]],
+                 "%2i"%(key[3]//2) if key[3]%2==0 else "%2i/2"%key[3],
+                 "%3i"%(key[4]//2) if key[4]%2==0 else "%3i/2"%key[4],
+                 str(jj.sqrt().fraction), str(ss.sqrt().fraction) ) )
         for alpha in range(key[2]):
-            print "overlap with alpha=%2i: %s" % \
-                ( alpha + 1,
-                  bitwf_dot(bitwf_vj[key], bitwf_vj[key[:2]+(alpha,)+key[3:]]) )
+            print( "overlap with alpha=%2i: %s" % \
+                   ( alpha + 1,
+                     bitwf_dot(bitwf_vj[key], bitwf_vj[key[:2]+(alpha,)+key[3:]]) ) )
         if j==9 and key[1]==4 and key[2]==0 and key[3] in [8,12]:
             for jpair in range(0, 10, 2):
                 op = pair_creation(jpair, 9)
                 if not save_memory:
-                    print "off-diagonal TBME of J=%i with v=2    : %s" % \
-                        ( jpair, 
-                          bitwf_dot( bitwf_times_a(op, bitwf_vj[key[:1]+(2,)+key[2:]]),
-                                     bitwf_times_a(op, bitwf_vj[key]) ) )
-                print "off-diagonal TBME of J=%i with alpha=2: %s" % \
-                    ( jpair, 
-                      bitwf_dot( bitwf_times_a(op, bitwf_vj[key[:2]+(1,)+key[3:]]),
-                                 bitwf_times_a(op, bitwf_vj[key]) ) )
+                    print( "off-diagonal TBME of J=%i with v=2    : %s" % \
+                           ( jpair, 
+                             bitwf_dot( bitwf_times_a(op, bitwf_vj[key[:1]+(2,)+key[2:]]),
+                                        bitwf_times_a(op, bitwf_vj[key]) ) ) )
+                print( "off-diagonal TBME of J=%i with alpha=2: %s" % \
+                       ( jpair, 
+                         bitwf_dot( bitwf_times_a(op, bitwf_vj[key[:2]+(1,)+key[3:]]),
+                                    bitwf_times_a(op, bitwf_vj[key]) ) ) )
 
 
 if __name__ == "__main__":
@@ -423,15 +434,15 @@ if __name__ == "__main__":
                                 if m == jj:
                                     bitwf = bitwf_vj[v, v, alpha, jj, jj]
                                     for i in range(v+2, n+2, 2):
-                                        bitwf = bitwf_times_s( sf1/Sqrt_fraction((i-v)*(j-i-v+3)/4),
+                                        bitwf = bitwf_times_s( sf1/Sqrt_fraction((i-v)*(j-i-v+3)//4),
                                                                bitwf_times_c(sup, bitwf) )
                                 else:
-                                    bitwf = bitwf_times_s( sf1/Sqrt_fraction((jj+m+2)*(jj-m)/4),
+                                    bitwf = bitwf_times_s( sf1/Sqrt_fraction((jj+m+2)*(jj-m)//4),
                                                            bitwf_jdown(bitwf, j) )
-                                print>>sys.stderr, "n=%2i v=%1i alpha=%2i/%2i j=%4s m=%5s:" % \
+                                print( "n=%2i v=%1i alpha=%2i/%2i j=%4s m=%5s:" % \
                                     ( n, v, alpha+1, dim_vj[v,jj],
-                                      "%2i"%(jj/2) if jj%2==0 else "%2i/2"%jj,
-                                      "%3i"%( m/2) if m %2==0 else "%3i/2"%m )
+                                      "%2i"%(jj//2) if jj%2==0 else "%2i/2"%jj,
+                                      "%3i"%( m//2) if m %2==0 else "%3i/2"%m ) )
                                 outputfile.write(struct.pack(
                                     fb+"6i", n, v, alpha, jj, m, len(bitwf) ) )
                                 outputfile.write( struct.pack(
