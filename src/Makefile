@@ -3,20 +3,20 @@
 # 
 
 # --- Intel Fortran compiler, single node
-FC = ifort
-FFLAGS = -O2 -qopenmp -no-ipo 
+# FC = ifort
+# FFLAGS = -O2 -qopenmp -no-ipo 
 # FFLAGS =  -fast -qopenmp 
 # FFLAGS =  -fast -qopenmp -no-ipo -check bounds -check pointers -check uninit -traceback
 # FFLAGS =  -g -check all -warn -traceback -debug all -p -no-ipo -qopenmp
 # FFLAGS =  -g -check all -warn -traceback -debug all -p -no-ipo
 # FFLAGS =  -g -check all -traceback -debug all -p -no-ipo
-LIBS = -qmkl # Intel Math Kernel Library for BLAS/LAPACK routines
+# LIBS = -qmkl # Intel Math Kernel Library for BLAS/LAPACK routines
 
 
 # --- GNU Fortran compiler, single node 
-# FC = gfortran
-# FFLAGS = -O3 -fopenmp -fallow-argument-mismatch
-# LIBS = -llapack -lblas -lm 
+FC = gfortran
+FFLAGS = -O3 -fopenmp -fallow-argument-mismatch
+LIBS = -llapack -lblas -lm 
 
 
 
@@ -184,7 +184,8 @@ mup_operate.exe: mup_operate.o $(OBJS)
 	$(FC) $(FFLAGS) -o $@ mup_operate.o $(OBJS) $(LIBS) 
 
 count_dim.exe: count_dim.f90 $(OBJS)
-	$(FC) $(FFLAGS)  -static -o $@ count_dim.f90 $(OBJS) $(LIBS) 
+# $(FC) $(FFLAGS)  -static -o $@ count_dim.f90 $(OBJS) $(LIBS) 
+	$(FC) $(FFLAGS) -o $@ count_dim.f90 $(OBJS) $(LIBS) 
 
 
 overlap_rwf.exe: overlap_rwf.F90 input_nml.o $(OBJS)
