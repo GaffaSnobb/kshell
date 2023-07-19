@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python
 #
 # ./add_snt.py foo.snt bar.snt output.snt
 # 
@@ -83,17 +83,17 @@ class SMInt:
             v = float(arr[5])
 
             if i > j: 
-                v *= (-1) **( (self.jorb[i]+self.jorb[j])/2-J + 1)
+                v *= (-1) **( (self.jorb[i]+self.jorb[j])//2-J + 1)
                 i, j = j, i
             if k > l:
-                v *= (-1) **( (self.jorb[k]+self.jorb[l])/2-J + 1)
+                v *= (-1) **( (self.jorb[k]+self.jorb[l])//2-J + 1)
                 k, l = l, k
             if i > k or (i == k and j > l):
                 i, j, k, l = k, l, i, j
 
             if (i,j,k,l,J) in vtb:
                 if abs( v - vtb[(i,j,k,l,J)] )>1.e-4:
-                        print 'WARNING duplicate TBME', i,j,k,l,J,v,vtb[(i,j,k,l,J)]
+                        print( 'WARNING duplicate TBME', i,j,k,l,J,v,vtb[(i,j,k,l,J)] )
                         continue
             vtb[(i,j,k,l,J)] = v
         fp.close()
@@ -171,10 +171,10 @@ class SMInt:
     def tbme_get0(self, i, j, k, l, J):
         v = 1.
         if i > j: 
-            v *= (-1) **( (self.jorb[i]+self.jorb[j])/2-J + 1)
+            v *= (-1) **( (self.jorb[i]+self.jorb[j])//2-J + 1)
             i, j = j, i
         if k > l:
-            v *= (-1) **( (self.jorb[k]+self.jorb[l])/2-J + 1)
+            v *= (-1) **( (self.jorb[k]+self.jorb[l])//2-J + 1)
             k, l = l, k
         if i > k or (i == k and j > l):
             i, j, k, l = k, l, i, j
@@ -184,7 +184,7 @@ class SMInt:
 
 if __name__ == "__main__":
     if len(sys.argv) < 3: 
-        print 'usage: add_snt.py foo.snt bar.snt (foobar.snt)'
+        print( 'usage: add_snt.py foo.snt bar.snt (foobar.snt)' )
         sys.exit(1)
 
     sm  = SMInt( sys.argv[1] )

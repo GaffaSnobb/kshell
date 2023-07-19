@@ -1,4 +1,4 @@
-#!/usr/bin/env python 
+#!/usr/bin/env python3
 # 
 #  ./nushell2snt.py foo.sp bar.int foobar.snt
 #   stardard output snt file for kshell
@@ -16,6 +16,11 @@
 #
 
 ######
+
+# 2to3
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 
 import sys
@@ -50,8 +55,8 @@ def read_comment_skip(fp):
 if __name__ == "__main__":
     ### read hoge.sp
     if len(sys.argv) < 3: 
-        print "\ntransform NUSHELL sp file and int file to KSHELL snt file"
-        print "\n  usage: KSHELLDIR/bin/nushell2snt.py foo.sp bar.int output.snt\n" 
+        print("\ntransform NUSHELL sp file and int file to KSHELL snt file")
+        print("\n  usage: KSHELLDIR/bin/nushell2snt.py foo.sp bar.int output.snt\n") 
         sys.exit()
 
     if len(sys.argv) == 4: 
@@ -59,15 +64,15 @@ if __name__ == "__main__":
     else: 
         # fn_out = sys.argv[1][:-3] + "_" + sys.argv[2][:-4] +".snt"
         fn_out = sys.argv[2][:-4] +".snt"
-    print " output file : ", fn_out
+    print(" output file : ", fn_out)
 
     fp = open(sys.argv[1])
     t_pn_isospin = read_comment_skip(fp)
     if t_pn_isospin[0] == "t":
         t_pn = False
-        print " Nushell interaction in isospin formalism "
+        print(" Nushell interaction in isospin formalism ")
     elif t_pn_isospin[0] == "pn":
-        print " Nushell interaction in proton-neutron formalism "
+        print(" Nushell interaction in proton-neutron formalism ")
         t_pn = True
     else:
         raise "sp file type error"
@@ -152,10 +157,10 @@ if __name__ == "__main__":
         out += "%3d %3d % 15.8f\n" % (i,i,spe[i-1])
 
     def add_v_tbme(ijkl, JT, v_tbme):
-        if not v_tbme.has_key(ijkl): v_tbme[ijkl] = {}
+        if ijkl not in v_tbme: v_tbme[ijkl] = {}
         v_tbme[ijkl][(JT)] = v
     
-    ns = nnorb/2
+    ns = nnorb//2
     ### read TBME
     for i in range(nline):
         arr = fp.readline().split()
@@ -187,7 +192,7 @@ if __name__ == "__main__":
         for j in range(i,nnorb+1):
             n2,l2,j2,t2 = i2nljtz[j]
             tz = t1 + t2
-            if not tbij_tz.has_key(tz): tbij_tz[tz] = []
+            if tz not in tbij_tz: tbij_tz[tz] = []
             tbij_tz[tz].append((i,j))
 
     out += "! TBME\n"
@@ -204,26 +209,26 @@ if __name__ == "__main__":
                 if max(abs(j1-j2),abs(j3-j4)) > min(j1+j2,j3+j4):
                     continue # triangular condition
                 ex_ij, ex_kl = False, False
-                if v_tbme.has_key((i,j,k,l)):
+                if (i,j,k,l) in v_tbme:
                     vjt = v_tbme[(i,j,k,l)]
-                elif v_tbme.has_key((k,l,i,j)):
+                elif (k,l,i,j) in v_tbme:
                     vjt = v_tbme[(k,l,i,j)]
-                elif v_tbme.has_key((i,j,l,k)):
+                elif (i,j,l,k) in v_tbme:
                     vjt = v_tbme[(i,j,l,k)]
                     ex_kl = True
-                elif v_tbme.has_key((l,k,i,j)):
+                elif (l,k,i,j) in v_tbme:
                     vjt = v_tbme[(l,k,i,j)]
                     ex_kl = True
-                elif v_tbme.has_key((j,i,k,l)):
+                elif (j,i,k,l) in v_tbme:
                     vjt = v_tbme[(j,i,k,l)]
                     ex_ij = True
-                elif v_tbme.has_key((k,l,j,i)):
+                elif (k,l,j,i) in v_tbme:
                     vjt = v_tbme[(k,l,j,i)]
                     ex_ij = True
-                elif v_tbme.has_key((j,i,l,k)):
+                elif (j,i,l,k) in v_tbme:
                     vjt = v_tbme[(j,i,l,k)]
                     ex_ij, ex_kl = True, True
-                elif v_tbme.has_key((l,k,j,i)):
+                elif (l,k,j,i) in v_tbme:
                     vjt = v_tbme[(l,k,j,i)]
                     ex_ij, ex_kl = True, True
                 else:
@@ -235,7 +240,7 @@ if __name__ == "__main__":
                     vvv = 0.0
                     for T in (1,0):
                         if abs(tz)>T*2: continue
-                        if not vjt.has_key((J,T)): continue
+                        if (J,T) not in vjt: continue
                         if i==j and ((j1+j2)//2-J+1-T)%2==0: continue
                         if k==l and ((j3+j4)//2-J+1-T)%2==0: continue
                         v = vjt[(J,T)]
@@ -247,17 +252,17 @@ if __name__ == "__main__":
                     if tz==0 and (n1!=n2 or l1!=l2 or j1!=j2): vvv /= sqrt(2.0)
                     if tz==0 and (n3!=n4 or l3!=l4 or j3!=j4): vvv /= sqrt(2.0)
                     
-                    if i==j and ((j1+j2)//2-J+1-(t1+t2)/2)%2==0: continue
-                    if k==l and ((j3+j4)//2-J+1-(t1+t2)/2)%2==0: continue
+                    if i==j and ((j1+j2)//2-J+1-(t1+t2)//2)%2==0: continue
+                    if k==l and ((j3+j4)//2-J+1-(t1+t2)//2)%2==0: continue
 
                     out_tbme += "%3d %3d %3d %3d  %3d   % 15.8f\n" % (i, j, k, l, J, vvv)
                     nline += 1
 
     if massdep:
-        print "mass dependence from .int file :  (A/%f)^%f" % massdep
+        print("mass dependence from .int file :  (A/%f)^%f" % massdep)
         out += " %10d %3d %3d %f\n" % (nline, 1, massdep[0], massdep[1])
     else:
-        imode = raw_input(\
+        imode = input(\
             'scaling factor of 2-body terms ?\n'
             + '[0]: no scaling or [1]: mass dependent scaling\n')        
         if not imode: 
@@ -267,7 +272,7 @@ if __name__ == "__main__":
             if imode==0:
                 out += " %10d %3d\n" % (nline, 0)
             elif imode==1:
-                line = raw_input('input A_0 and p for (A/A_0)^p \n')
+                line = input('input A_0 and p for (A/A_0)^p \n')
                 arr = line.split()
                 out += " %10d %3d " % (nline, 1) 
                 out += arr[0] + " " + arr[1] + "\n"

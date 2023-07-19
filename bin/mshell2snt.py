@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 # ./mshell2snt.py hoge.sps hoge.int output.snt
 # transform  mshell/mshell64 format (p-n formalism) to snt format
 #
@@ -37,21 +37,21 @@ def char_orbit(n, l, j, t):
 
 if __name__ == "__main__":
     if len(sys.argv)<2: 
-        print "usage: mshell2snt.py hoge.sps hoge.int output.snt"
+        print( "usage: mshell2snt.py hoge.sps hoge.int output.snt" )
         sys.exit(1)
 
-    print " mass dependence ? y/n"
+    print( " mass dependence ? y/n" )
     ans = sys.stdin.readline()
     if ans[0] == "n" or ans[0] == "N" or ans[0] == "0":
         method2 = 0
     else:
         method2 = 1
-        print "assume  (A/mc)**power TBME mass dependence"
-        print "mc power ?"
+        print( "assume  (A/mc)**power TBME mass dependence" )
+        print( "mc power ?" )
         ans = sys.stdin.readline().split()
         mc = int(ans[0])
         power = float(ans[1])
-        print " (A/%3d)**% 5.3f TBME mass dependence" % (mc, power)
+        print( " (A/%3d)**% 5.3f TBME mass dependence" % (mc, power) )
         
 
 
@@ -94,10 +94,12 @@ if __name__ == "__main__":
         ijkl, jt = (i,j,k,l), (J,T)
         if i>k or ( i==k and j>l ):
             i, j, k, l = k, l, i, j
-        if Vint.has_key(ijkl):
-            if Vint[ijkl].has_key(jt):
+        # if Vint.has_key(ijkl):
+        #     if Vint[ijkl].has_key(jt):
+        if ijkl in Vint:
+            if jt in Vint[ijkl]:
                 continue
-#                print " double entry ", arr
+#                print( " double entry ", arr )
 #                raise 
             else:
                 Vint[ijkl][jt]=V
@@ -120,21 +122,23 @@ if __name__ == "__main__":
         n, l, j, t = norb[i], lorb[i], jorb[i], itorb[i]
         fp_out.write( "  %3d %3d   %12.5f\n" % (i+1, i+1, spe[i]) )
 
-    list_ijkl = Vint.keys()
-    list_ijkl.sort()
+    list_ijkl = sorted( Vint.keys() )
+    # list_ijkl = Vint.keys()
+    # list_ijkl.sort()
     nline = 0
     cout = ""
     for Tz in (-2, 2, 0):
         for ijkl in list_ijkl:
             i,j,k,l = ijkl
-            maxJ = min( jorb[i-1] + jorb[j-1], jorb[k-1] + jorb[l-1] ) / 2 
+            maxJ = min( jorb[i-1] + jorb[j-1], jorb[k-1] + jorb[l-1] ) // 2 
             minJ = max( abs(jorb[i-1] - jorb[j-1]) , 
-                        abs(jorb[k-1] - jorb[l-1]) ) / 2 
+                        abs(jorb[k-1] - jorb[l-1]) ) // 2 
             if Tz != itorb[i-1] + itorb[j-1]: continue
             for J in range(minJ, maxJ+1):
                 v = 0.0
                 for T in (0, 1):
-                    if Vint[ijkl].has_key( (J, T) ):
+                    # if Vint[ijkl].has_key( (J, T) ):
+                    if (J, T) in Vint[ijkl]:
                         v += Vint[ijkl][ (J, T) ]
                 if v==0.0: continue
                 if Tz == 0:

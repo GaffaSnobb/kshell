@@ -18,7 +18,7 @@ thd = 0.    # threashold to show for E2
 # scaling of width for E2/M1
 w_scale = 1./400.  # 1 # 2
 
-shft_np = 0.03 # shift J value for negative/positive parity
+shft_np = 0.03 # small shift of x-axis for negative/positive parity
 
 import sys
 from math import *
@@ -167,7 +167,7 @@ def main(fn, prty, mtpl, levels, trns):
         plot_trn(2, '+', 'r-', args)
 
         # positive parity, dJ=1
-        args = {'alpha':1., 'dashes': (8,2), 'label': blabel('1', '+') }
+        args = {'alpha':1., 'dashes': (4,2), 'label': blabel('1', '+') }
         plot_trn(1, '+', 'r-', args)
 
         # positive parity, dJ=0
@@ -201,7 +201,12 @@ def main(fn, prty, mtpl, levels, trns):
         lab = r'$J^{%s}$' % (prty_list[0])
     pylab.xlabel(lab,   fontsize=20)
     pylab.ylabel('$E_x$ (MeV)', fontsize=20)
-    
+
+
+
+    params = {# 'legend.fontsize': 12,
+              'legend.handlelength': 4}
+    pylab.rcParams.update(params)
 
     pylab.legend(loc='lower right')
 

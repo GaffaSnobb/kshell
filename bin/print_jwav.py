@@ -1,6 +1,6 @@
 #!/usr/bin/python
 #
-# 
+# print components of J-scheme wave function prepared by convert_m2j.py
 #
 usage_message = \
 '''

@@ -1,9 +1,15 @@
 #!/usr/bin/python
 #
+# Note:  prepare "seniority_basis.dat" in advance.
+#
+# initial version by Yusuke Tsunoda (CNS Tokyo) 2017
+# 
 usage = \
 """ 
  usage: convert_m2j.py foo.snt bar.ptn input.wav (output.jwv)
 """
+#
+# Note: both proton and neutron orbits must exist
 #
 
 from functools import reduce
@@ -12,8 +18,8 @@ from functools import reduce
 # parameters 
 
 chunk_save = 10000 #  chunk number of partitions to save at once
-chunk_calc =   50 #  chunk number of partitions for parallel computation
-chunk_calc =   10 #  chunk number of partitions for parallel computation
+chunk_calc =    50 #  chunk number of partitions for parallel computation
+chunk_calc =    10 #  chunk number of partitions for parallel computation
 #chunk_save = 1 #  chunk number of partitions to save at once
 #chunk_calc = 1 #  chunk number of partitions for parallel computation
 
@@ -88,11 +94,11 @@ def calc_dim_vj(j):
     # return dim_vj[v,2J]
     dim_vj={}
     for v in range(j//2+2):
-        for jj in range((j+1-v)*v,-1,-2):
-            dim =   young(j+1-v,v,((j+1-v)*v-jj)/2) \
-                  - young(j+1-v,v,((j+1-v)*v-jj)/2-1) \
-                  - young(j+3-v,v-2,((j+3-v)*(v-2)-jj)/2) \
-                  + young(j+3-v,v-2,((j+3-v)*(v-2)-jj)/2-1)
+        for jj in range((j+1-v)*v, -1, -2):
+            dim =   young(j+1-v, v,   ((j+1-v)* v   -jj)//2) \
+                  - young(j+1-v, v,   ((j+1-v)* v   -jj)//2-1) \
+                  - young(j+3-v, v-2, ((j+3-v)*(v-2)-jj)//2) \
+                  + young(j+3-v, v-2, ((j+3-v)*(v-2)-jj)//2-1)
             if dim!=0:
                 dim_vj[v,jj] = dim
     return dim_vj
@@ -207,7 +213,7 @@ def mm2jm(j1, j2, m1, m2):
         j = j1 - m2
     return j,m
    
-def jm2mm(j1,j2,j,m):
+def jm2mm(j1, j2, j, m):
     if m > j1-j2:
         m1 = j - j2
         m2 = m - m1
@@ -232,7 +238,9 @@ class ModelSpace:
 
         dim_jnm, mbit_jn, m_j_mbit, mbit_jnm, mbit_jnm_rev = {}, {}, {}, {}, {}
 
-        for j in set(jorb):
+        # for j in set(jorb):
+        print("BBBBBBBBBBB",max(jorb))
+        for j in range(1, max(jorb)+1, 2):
             dim_jnm[j]  = [{} for x in range(j+2)]
             mbit_jn[j]  = [[] for x in range(j+2)]
             mbit_jnm[j] = [{} for x in range(j+2)]
@@ -441,6 +449,7 @@ def mp_product(mp1,mp2):
     return mp
    
 def mps_product(mps):
+    if not mps: return {(0,1) : 1} # for no p/n orbit xxxxxxxxxxxxx
     while True:
         if len(mps)==1: break
         mp1 = mps.pop(0)
@@ -449,8 +458,8 @@ def mps_product(mps):
     return mps[0]
    
 def init_mbit_p(ptn):
-    mps = [dict([((m,(-1)**(lorb[i]*n)),dim_jnm[jorb[i]][n][m])
-               for m in dim_jnm[jorb[i]][n]])
+    mps = [ dict([ ( (m,(-1)**(lorb[i]*n)), dim_jnm[jorb[i]][n][m] )
+                   for m in dim_jnm[jorb[i]][n] ])
          for i,n in enumerate(ptn)]
     dim_mp = mps_product(mps)
     dim_m = dict([(m,x) for (m,p),x in dim_mp.items()])
@@ -464,7 +473,7 @@ def init_mbit_p(ptn):
             idx_m_mbit[m] = {}
         mbit_m[m].append(mbits[::-1])
         idx_m_mbit[m][mbits[::-1]] = len(mbit_m[m])-1
-    return dim_mp,dim_m,mbit_m,idx_m_mbit
+    return dim_mp, dim_m, mbit_m, idx_m_mbit
    
 def init_mbit_n(ptn):
     mps = [dict([ ( (m,(-1)**(lorb[n_jorb[0]+i]*n)),
@@ -497,7 +506,8 @@ def convert_wf_prl( idpn, wavdata, ptn_pn, jorb, occs, mtotal,
     # print >> sys.stderr, idpn+1,"/",len(ptn_pn)
     # sys.stdout.write( '\r {:8d} / {:8d}'.format( idpn+1, len(ptn_pn) ) )
     # sys.stdout.flush()
-   
+
+    # ms .. M of each single particle orbit, M_j
     mslist = [ tuple(ms) for ms
                in itertools.product( *[ range(-n*(j+1-n), n*(j+1-n)+2, 2)
                                         for j,n in zip(jorb,occs) ] )
@@ -505,6 +515,8 @@ def convert_wf_prl( idpn, wavdata, ptn_pn, jorb, occs, mtotal,
     wfdata = dict([ (ms, numpy.empty([ len(mbit_jnm[j][n][m]) for j,n,m
                                        in zip(jorb,occs,ms) ]) )
                     for ms in mslist ])
+    # read M-scheme wave function
+    # wfdata[ list of M_j for j-orbit ][ list of indexes of m-scheme for j-orbit ] = v
     pos = 0
     for mtotp in range(min(dim_idp_m),max(dim_idp_m)+2,2):
         mtotn = mtotal - mtotp
@@ -521,7 +533,10 @@ def convert_wf_prl( idpn, wavdata, ptn_pn, jorb, occs, mtotal,
                             in zip(jorb,occs,ms,mbits)]) ] \
                             = struct.unpack(fb+'d', wavdata[pos:pos+8])[0]
                 pos += 8
-            
+
+    
+    # M-scheme wave function -> J-scheme in each j-orbit
+    # wfdata[ list of M_j for j-orbit ][ list of indexes of j-scheme for j-orbit ] = value
     for ms in wfdata:
         for i in range(sum(n_jorb)):
             wfdata[ms] = numpy.einsum(
@@ -530,14 +545,17 @@ def convert_wf_prl( idpn, wavdata, ptn_pn, jorb, occs, mtotal,
                 jvabit_jnm[jorb[i], occs[i], ms[i]],
                 [i, sum(n_jorb)],
                 range(sum(n_jorb)) )
+            
          
+    # js .. J of each single particle orbit, J_j
     jslist = [ tuple(js) for js in
                itertools.product( *[j_jn[j][n] for j,n in zip(jorb,occs)] ) ]
-    ms_js_rev = dict([ (js,dict([
+    # ms_js_rev[ list of J_j ][ list of M_j ] = index of [list of M_j ]
+    ms_js_rev = dict([ ( js, dict([
         (tuple(ms),i) for i,ms
         in enumerate([ x for x in
                        itertools.product(*[range(-j,j+2,2) for j in js])
-                       if sum(x)==mtotal])]))
+                       if sum(x)==mtotal])]) )
                        for js in jslist ])
     vas_js_rev = dict([ (js,dict([
         (tuple(vas[0]+vas[1]),i) for i,vas
@@ -551,6 +569,8 @@ def convert_wf_prl( idpn, wavdata, ptn_pn, jorb, occs, mtotal,
                                                    for j,n,j2 in
                                                    zip(jorb,occs,js)]) ) ) )
                         for js in jslist])
+    # reorder wf
+    # wfdata[ list of J_j ][ index of M_j, index of (v,a)_j  ] = val
     for ms in wfdata:
         for jvas,value in zip( itertools.product(*[jva_jnm[j][n][m]
                                                    for j,n,m in
@@ -564,41 +584,42 @@ def convert_wf_prl( idpn, wavdata, ptn_pn, jorb, occs, mtotal,
    
     r = b""
     for js in sorted(wfdata):
+        # proton
         for i in range(n_jorb[0]-1):
-            if js[i+1]==0: continue
-            if i==0 and js[0]==0: continue
-            # initialize
-            jcs=[]
+            if js[i+1]==0: continue        # no need to couple if J_{i+1}=0
+            if i==0 and js[0]==0: continue # no need to couple if J_0=0 x J_1
+            # J_coupled 
+            jcs=[] 
             for i2 in range(i):
-                jcs.append(abs((js[0] if i2==0 else jcs[i2-1])-js[i2+1]))
-            msp = [ -js[i2] for i2 in range(i+2,n_jorb[0]) ]
-            msn = [ -js[i2] for i2 in range(n_jorb[0],sum(n_jorb)) ]
+                jcs.append( abs( (js[0] if i2==0 else jcs[i2-1]) - js[i2+1] ) )
+            msp = [ -js[i2] for i2 in range(i+2, n_jorb[0]) ]         # p: M_j = -J_j for init
+            msn = [ -js[i2] for i2 in range(n_jorb[0], sum(n_jorb)) ] # n: M_j = -J_j for init
             while True:
                 # main
-                m = mtotal - sum(msp + msn)
-                j1 = (js[0] if i==0 else jcs[i-1])
-                j2 = js[i+1]
+                m = mtotal - sum(msp + msn)          # M_3 = M_total - sum(M_j[i+1:])
+                j1 = (js[0] if i==0 else jcs[i-1])   # J_1 = J_c[i-1]
+                j2 = js[i+1]                         # J_2 = J_[i+1] 
                 if j1 != 0 and abs(m) < j1+j2:
                     idx = []
-                    for m1 in range(max(-j1,m-j2), min(j1,m+j2)+2, 2):
-                        m2 = m - m1
-                        ms = jcs+[m1,m2] + msp + msn
-                        for i2 in range(i-1,-1,-1):
+                    for m1 in range(max(-j1,m-j2), min(j1,m+j2)+2, 2): # M_1
+                        m2 = m - m1                                    # M_2
+                        ms = jcs + [m1,m2] + msp + msn                 # J_c[:i] + M_j[i:]
+                        for i2 in range(i-1,-1,-1):                    # ???
                             ms = ms[:i2] + \
-                                 list(jm2mm(js[0] if i2==0 else ms[i2-1],
-                                            js[i2+1], ms[i2], ms[i2+1])) \
-                                 + ms[i2+2:]
-                        idx.append(ms_js_rev[js][tuple(ms)])
-                    wfdata[js][idx,:] = dcg_matrix(j1,j2,m)*wfdata[js][idx,:]
+                                list( jm2mm( js[0] if i2==0 else ms[i2-1],
+                                             js[i2+1], ms[i2], ms[i2+1] ) ) \
+                                + ms[i2+2:]
+                        idx.append( ms_js_rev[js][tuple(ms)] )         # index of ms
+                    wfdata[js][idx,:] = dcg_matrix(j1,j2,m) * wfdata[js][idx,:] # matrix product
                 #increment
-                for i2 in range(sum(n_jorb)-1, n_jorb[0]-1, -1):
+                for i2 in range(sum(n_jorb)-1, n_jorb[0]-1, -1): # neutron M_j increment
                     if j1 == 0: continue
-                    if msn[i2-n_jorb[0]] == js[i2]: continue
-                    msn[i2-n_jorb[0]] += 2
+                    if msn[ i2 - n_jorb[0] ] == js[i2]: continue
+                    msn[ i2 - n_jorb[0] ] += 2  # M_j += 1
                     for i3 in range(i2+1, sum(n_jorb)):
-                        msn[i3-n_jorb[0]] = -js[i3]
+                        msn[ i3 - n_jorb[0] ] = -js[i3] # M_j[i2+1:] = -J_j
                     break
-                else:
+                else:                                            # proton M_j increment
                     for i2 in range(n_jorb[0]-1, i+1, -1):
                         if j1 == 0: continue
                         if msp[i2-i-2] == js[i2]: continue
@@ -608,25 +629,26 @@ def convert_wf_prl( idpn, wavdata, ptn_pn, jorb, occs, mtotal,
                         for i3 in range(n_jorb[0],sum(n_jorb)):
                             msn[i3-n_jorb[0]] = -js[i3]
                         break
-                    else:
+                    else:                                        # J_c increment
                         for i2 in range(i-1,-1,-1):
                             if jcs[i2]==( js[0] if i2==0 else
                                           jcs[i2-1])+js[i2+1]: continue
                             jcs[i2] += 2
                             for i3 in range(i2+1, i):
                                 jcs[i3] = abs(jcs[i3-1] - js[i3+1])
-                            for i3 in range(i+2, n_jorb[0]):
+                            for i3 in range(i+2, n_jorb[0]): # init M_j
                                 msp[i3-i-2] = -js[i3]
                             for i3 in range(n_jorb[0], sum(n_jorb)):
                                 msn[i3-n_jorb[0]] = -js[i3]
                             break
                         else:
                             break
-                     
+                        
+        # neutron
         for i in range(n_jorb[0], sum(n_jorb)-1):
             if js[i+1] == 0: continue
             if i==n_jorb[0] and js[n_jorb[0]]==0: continue
-            #initialize
+            # J_coupled 
             jcsp=[]
             for i2 in range(n_jorb[0]-1):
                 jcsp.append(abs((js[0] if i2==0 else jcsp[i2-1])-js[i2+1]))
@@ -648,11 +670,15 @@ def convert_wf_prl( idpn, wavdata, ptn_pn, jorb, occs, mtotal,
                         m2 = m - m1
                         ms = jcsp + [mp] + jcsn + [m1,m2] + msn
                         for i2 in range(i-1, n_jorb[0]-1, -1):
-                            ms=ms[:i2]+list(jm2mm(js[n_jorb[0]] if i2==n_jorb[0] else ms[i2-1],js[i2+1],ms[i2],ms[i2+1]))+ms[i2+2:]
+                            ms =  ms[:i2] \
+                                + list( jm2mm(js[n_jorb[0]] if i2==n_jorb[0] else ms[i2-1], js[i2+1], ms[i2], ms[i2+1]) ) \
+                                + ms[i2+2:]
                         for i2 in range(n_jorb[0]-2,-1,-1):
-                            ms=ms[:i2]+list(jm2mm(js[0] if i2==0 else ms[i2-1],js[i2+1],ms[i2],ms[i2+1]))+ms[i2+2:]
+                            ms =  ms[:i2] \
+                                + list( jm2mm(js[0] if i2==0 else ms[i2-1], js[i2+1], ms[i2], ms[i2+1]) ) \
+                                + ms[i2+2:]
                         idx.append(ms_js_rev[js][tuple(ms)])
-                    wfdata[js][idx,:]=dcg_matrix(j1,j2,m)*wfdata[js][idx,:]
+                    wfdata[js][idx,:] = dcg_matrix(j1,j2,m) * wfdata[js][idx,:]  # matrix product
                 #increment
                 for i2 in range(sum(n_jorb)-1,i+1,-1):
                     if j1==0: continue
@@ -663,7 +689,7 @@ def convert_wf_prl( idpn, wavdata, ptn_pn, jorb, occs, mtotal,
                     break
                 else:
                     if j1!=0 and mp!=jcsp[-1]:
-                        mp+=2
+                        mp += 2
                         for i3 in range(i+2,sum(n_jorb)):
                             msn[i3-i-2]=-js[i3]
                     else:
@@ -692,20 +718,20 @@ def convert_wf_prl( idpn, wavdata, ptn_pn, jorb, occs, mtotal,
                             else:
                                 break
                         
-        #initialize
+        # Jp x Jn coupled 
         # jcsp = [ abs((js[0] if i2==0 else jcsp[i2-1])-js[i2+1]) for i2 in range(n_jorb[0]-1) ]
-        jcsp=[]
+        jcsp=[] # init jcsp, jcsn
         for i2 in range(n_jorb[0]-1):
-            jcsp.append(abs((js[0] if i2==0 else jcsp[i2-1])-js[i2+1]))
+            jcsp.append( abs( (js[0] if i2==0 else jcsp[i2-1])-js[i2+1] ) )
         jcsn=[]
         for i2 in range(n_jorb[0],sum(n_jorb)-1):
-            jcsn.append(abs((js[n_jorb[0]] if i2==n_jorb[0] else jcsn[i2-n_jorb[0]-1])-js[i2+1]))
+            jcsn.append( abs( (js[n_jorb[0]] if i2==n_jorb[0] else jcsn[i2-n_jorb[0]-1]) - js[i2+1] ) )
         while True:
             #main
             m = mtotal
-            j1 = jcsp[-1]
-            j2 = jcsn[-1]
-            if abs(j1-j2)<=jj<=j1+j2:
+            j1 = jcsp[-1] 
+            j2 = jcsn[-1] 
+            if abs(j1-j2) <= jj <= j1+j2:
                 idx = []
                 for m1 in range(max(-j1,m-j2), min(j1,m+j2)+2, 2):
                     m2 = m - m1
@@ -714,21 +740,21 @@ def convert_wf_prl( idpn, wavdata, ptn_pn, jorb, occs, mtotal,
                         ms = ms[:i2] + list(jm2mm( js[n_jorb[0]] if i2==n_jorb[0]
                                                    else ms[i2-1],js[i2+1],ms[i2],ms[i2+1])) + ms[i2+2:]
                     for i2 in range(n_jorb[0]-2,-1,-1):
-                        ms = ms[:i2]+list(jm2mm(js[0] if i2==0 else ms[i2-1],js[i2+1],ms[i2],ms[i2+1]))+ms[i2+2:]
+                        ms = ms[:i2] + list(jm2mm(js[0] if i2==0 else ms[i2-1],js[i2+1],ms[i2],ms[i2+1]))+ms[i2+2:]
                     idx.append(ms_js_rev[js][tuple(ms)])
-                value = tuple((dcg_matrix(j1,j2,m)[(jj-max(abs(j1-j2),abs(m)))//2,:]*wfdata[js][idx,:]).flat)
+                value = tuple( ( dcg_matrix(j1,j2,m)[(jj-max(abs(j1-j2),abs(m)))//2,:]*wfdata[js][idx,:] ).flat )
                 r += struct.pack( '<%id'%len(value), *value )
             #increment
-            for i2 in range(sum(n_jorb)-2,n_jorb[0]-1,-1):
+            for i2 in range(sum(n_jorb)-2, n_jorb[0]-1, -1):
                 if jcsn[i2-n_jorb[0]] == (js[n_jorb[0]] if i2==n_jorb[0] else jcsn[i2-n_jorb[0]-1]) + js[i2+1]:
                     continue
-                jcsn[i2-n_jorb[0]]+=2
-                for i3 in range(i2+1,sum(n_jorb)-1):
-                    jcsn[i3-n_jorb[0]]=abs(jcsn[i3-n_jorb[0]-1]-js[i3+1])
+                jcsn[i2-n_jorb[0]] += 2
+                for i3 in range(i2+1, sum(n_jorb)-1):
+                    jcsn[i3-n_jorb[0]] = abs(jcsn[i3-n_jorb[0]-1] - js[i3+1])
                 break
             else:
                 for i2 in range(n_jorb[0]-2,-1,-1):
-                    if jcsp[i2]==(js[0] if i2==0 else jcsp[i2-1])+js[i2+1]: continue
+                    if jcsp[i2] == (js[0] if i2==0 else jcsp[i2-1]) + js[i2+1]: continue
                     jcsp[i2]+=2
                     for i3 in range(i2+1,n_jorb[0]-1):
                         jcsp[i3]=abs(jcsp[i3-1]-js[i3+1])
@@ -770,9 +796,10 @@ if __name__ == '__main__':
     
    
     dim_jnm, mbit_jn, m_j_mbit, mbit_jnm, mbit_jnm_rev = {}, {}, {}, {}, {}
-    
-#    for j in set(jorb):
-    for j in range(1, max(jorb)+2, 2):
+
+    l_jorb = list( range(1, max(jorb)+2, 2) )
+
+    for j in l_jorb:
         dim_jnm[j]  = [{} for x in range(j+2)]
         mbit_jn[j]  = [[] for x in range(j+2)]
         mbit_jnm[j] = [{} for x in range(j+2)]
@@ -803,34 +830,34 @@ if __name__ == '__main__':
         dim_idpn_mp.append( mp_product(dim_idp_mp[idp], dim_idn_mp[idn] ) )
         mp_add( dim_mp, dim_idpn_mp[-1] )
       
-    dim_j_vj = dict( (j, calc_dim_vj(j)) for j in set(jorb) )
+    dim_j_vj = dict( (j, calc_dim_vj(j)) for j in l_jorb )
     jva_jn   = dict( (j, [ [ (jj,v,alpha) for (v,jj),dim
                             in sorted( dim_j_vj[j].items(),
                                        key=lambda x:x[0][::-1])
                              if (n+v)%2==0 and v<=min(n,j+1-n)
                              for alpha in range(dim) ]
                            for n in range(j+2)] )
-                      for j in set(jorb) )
+                      for j in l_jorb )
     j_jn     = dict( (j, [sorted(list(set([x[0] for x in jva_jn[j][n]])))
                          for n in range(j+2)])
-                     for j in set(jorb) )
+                     for j in l_jorb )
     va_jnj   = dict( (j, [dict([(jj,[x[1:] for x in jva_jn[j][n] if x[0]==jj])
                                for jj in j_jn[j][n]])
                          for n in range(j+2)])
-                     for j in set(jorb) )
+                     for j in l_jorb )
     dim_jnj  = dict( (j, [dict([(jj,len(va_jnj[j][n][jj]))
                                for jj in j_jn[j][n]])
                          for n in range(j+2)])
-                     for j in set(jorb) )
+                     for j in l_jorb )
     jva_jnm  = dict( (j, [dict([(m,[x for x in jva_jn[j][n] if x[0]>=abs(m)])
                                for m in range(-n*(j+1-n),n*(j+1-n)+2,2)])
                          for n in range(j+2)])
-                     for j in set(jorb) )
+                     for j in l_jorb )
     jva_jnm_rev = dict( (j, [dict([(m,dict([(y,x) for x,y
                                            in enumerate(jva_jnm[j][n][m])]))
                                   for m in range(-n*(j+1-n),n*(j+1-n)+2,2)])
                             for n in range(j+2)])
-                        for j in set(jorb) )
+                        for j in l_jorb )
 
     
     if not os.path.exists(fn_sb):
