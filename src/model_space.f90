@@ -219,7 +219,7 @@ contains
     end if
     if (myrank==0) write(*,'(a, 2i3, a, i3, a, 2i5)') &
          'N. of valence protons and neutrons = ', np,nn, '   mass=',mass,&
-         "   n,z-core ", n_core(1), n_core(2)
+         "   z,n-core ", n_core(1), n_core(2)
   end subroutine set_n_ferm
 
 

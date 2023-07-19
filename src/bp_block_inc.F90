@@ -1,6 +1,8 @@
 #define MACRO_PASTE(A) A
 #define MACRO_ADD_SUFX(STR) MACRO_PASTE(STR)NBLOCK
 
+! included by bp_block.F90 with fixed NBLOCK for better performance
+
 
   subroutine MACRO_ADD_SUFX(bp_operate_block)(self, vl, op, vr)
     ! block version : vl = op * vr 
@@ -24,6 +26,8 @@
        if ( .not. op%is_j_square .and. verbose_h==1 ) verb = .true.
     end if
 
+    call print_mem_status('bp-block-01')
+       
     if (verb) then
        call reset_stopwatch(time_ope_cpu)
        call reset_stopwatch(time_wait)
@@ -63,9 +67,12 @@
 
     call stop_stopwatch(time_copy_block)
 
+    call print_mem_status('bp-block-02')
+
 #ifdef MPI
     call start_stopwatch(time_mpi_init)
     if (verb) call start_stopwatch(time_wait)
+! TODO allgather     
     ! do i = 0, nprocs_shift - 2
     do i = 0, nv_shift - 2
        call mympi_sendrecv( &
@@ -76,6 +83,7 @@
     call stop_stopwatch(time_mpi_init)
 #endif /* MPI */
 
+    call print_mem_status('bp-block-03')
 
     call start_stopwatch(time_operate)
 
@@ -192,6 +200,8 @@
           if (verb) call stop_stopwatch(time_wait)
        end if
 #endif /* MPI */
+
+       call print_mem_status('bp-block-04')
 
     end do
 
@@ -599,6 +609,29 @@
       integer, intent(in) :: np, p_ik(:,:), nn, n_jl(:,:)
       integer :: i, j
 
+      ! do j = 1, nn
+      !    do i = 1, np
+      !       call daxpy(NBLOCK, opv(p_ik(1, i), n_jl(1, j)), &
+      !            rwf(:, p_ik(3, i), n_jl(3, j)), 1, &
+      !            lwf(:, p_ik(2, i), n_jl(2, j)), 1 ) 
+      !    end do
+      ! end do
+
+!      real(8) :: t(NBLOCK)
+!       do j = 1, nn
+!          nj = n_jl(1, j)
+!          nl = n_jl(2, j)
+!          nx = n_jl(3, j)
+! ! !ocl swp
+!          do i = 1, np
+!             pi = p_ik(1, i)
+!             pk = p_ik(2, i)
+!             v = opv(pi, nj)
+!             px = p_ik(3, i)
+!             lwf(:, pk, nl) = lwf(:, pk, nl)  + v * rwf(:, px, nx)
+!          end do
+!       end do
+
       do j = 1, nn
          do i = 1, np
             lwf(:, p_ik(2, i), n_jl(2, j)) = lwf(:, p_ik(2, i), n_jl(2, j)) &
@@ -795,7 +828,6 @@
 #ifdef MPI
     call start_stopwatch(time_mpi_fin)
 
-!!! mpi_reduce is replaced by mpi_sendrecv + openmp sum
     ! TODO mpi-sum overlap
     destl = modulo(myrank_reduce + 1, nprocs_reduce)
     froml = modulo(myrank_reduce - 1, nprocs_reduce)

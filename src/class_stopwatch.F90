@@ -30,13 +30,12 @@ module class_stopwatch
        time_oper_tmp, time_ope_cpu, time_tmpi_init, time_tmpi_fin
 
   public :: time_qr_decomp, time_zpares, &
-       time_copy_block, time_ld, time_proj_ss, time_shift_ss
+       time_copy_block, time_ld, time_proj_ss, time_shift_ss, time_tbtd, time_cpld_tbtd, &
+       time_print_tbtd, time_mpi_tbtd
 
   type(stopwatch), save :: time_qr_decomp, time_zpares, &
-       time_copy_block, time_ld, time_proj_ss, time_shift_ss
-
-  public :: time_tbtd
-  type(stopwatch), save :: time_tbtd
+       time_copy_block, time_ld, time_proj_ss, time_shift_ss, &
+       time_tbtd, time_cpld_tbtd, time_print_tbtd, time_mpi_tbtd
 
   type stopwatch_ptn
      real(8), allocatable :: time(:), tstart(:)
@@ -46,14 +45,14 @@ module class_stopwatch
 
   real(8) :: t_rate = 0.d0
 
+  public :: print_mem_status
   
 contains
   
   subroutine start_stopwatch(this, is_reset, is_mpi_barrier)
     type(stopwatch), intent(inout) :: this
     logical, intent(in), optional :: is_reset, is_mpi_barrier
-!    real(8) :: wclock
-    if (this%is_on) stop "ERROR: start_stopwatch"
+    if (this%is_on) write(*,*) "WARNING: start_stopwatch duplicated"
     this%is_on = .true.
 !    !$ if (omp_get_thread_num()==0) then
 #ifdef MPI
@@ -75,9 +74,8 @@ contains
     type(stopwatch), intent(inout) :: this
     real(8), intent(out), optional :: time_last
     logical, intent(in), optional :: is_mpi_barrier
-!    real(8) :: wclock
     real(8) :: t
-    if (.not. this%is_on) stop "ERROR: stop_stopwatch"
+    if (.not. this%is_on) write(*,*) "WARNING: stop_stopwatch duplicated"
     this%is_on = .false.
 !    !$ if (omp_get_thread_num()==0) then
 #ifdef MPI
@@ -111,7 +109,6 @@ contains
     type(stopwatch), intent(in) :: this
     logical, intent(in), optional :: is_mpi_sync
     real(8) :: r
-!    real(8) :: wclock
     r = wclock() - this%tstart
 #ifdef MPI
     if (.not. present(is_mpi_sync)) return
@@ -149,13 +146,18 @@ contains
     call print_each(time_proj_ss,      "proj in SS")
     call print_each(time_shift_ss,     "shift in SS")
     call print_each(time_tbtd,         "TBTD")
-
+    call print_each(time_cpld_tbtd,    "coupled TBTD")
+    call print_each(time_mpi_tbtd,     "MPI sum TBTD")
+    call print_each(time_print_tbtd,   "print TBTD")
+    
     r = time_total%time - time_preproc%time &
          - time_mpi_init%time - time_operate%time - time_mpi_fin%time &
          - time_orth%time - time_restart%time - time_diag%time &
          - time_dump%time - time_qr_decomp%time - time_zpares%time &
          - time_copy_block%time &
-         - time_ld%time - time_proj_ss%time - time_shift_ss%time 
+         - time_ld%time - time_proj_ss%time - time_shift_ss%time &
+         - time_tbtd%time - time_cpld_tbtd%time - time_print_tbtd%time &
+         - time_mpi_tbtd%time
     if (myrank==0) write(*,'(1a15, 1f12.3, 22x, 1f9.4)') &
          "misc", r, r/time_total%time
     if (myrank==0)  write(*,*)
@@ -203,13 +205,11 @@ contains
 
   subroutine start_time_ptn(idl)
     integer, intent(in) :: idl
-!    real(8) :: wclock
     time_ptn%tstart(idl) = wclock()
   end subroutine start_time_ptn
 
   subroutine stop_time_ptn(idl)
     integer, intent(in) :: idl
-!    real(8) :: wclock
     time_ptn%time(idl) = time_ptn%time(idl) + (wclock() - time_ptn%tstart(idl))
   end subroutine stop_time_ptn
 
@@ -261,9 +261,39 @@ contains
   end subroutine my_mpi_finalize
 
 
+  subroutine print_mem_status(inp)
+    ! only for Linux
+    character(len=*), intent(in) :: inp
+    character(len=512) :: c_num, fn_proc
+    integer :: getpid
+
+
+    return
+    if (myrank /= 0) return
+
+    !$omp single
+    write(c_num, '(i0)') getpid()
+    fn_proc = '/proc/' // trim(c_num) // '/status'
+
+    write(*,*)
+    write(*,'(3a)') '*** memory status at ', trim(inp), ' ***  '
+    call system( 'cat ' // trim(fn_proc) // ' | grep VmRSS' )
+    write(*,*)
+    !$omp end single
+
+  end subroutine print_mem_status
+
+
   function wclock() result (r)
     real(8) :: r
     integer(8) :: t, tr, tmax
+
+#ifdef MPI  
+    r = mpi_wtime()
+#else
+    !$ r = omp_get_wtime()
+    !$ return
+    
     if (t_rate == 0.d0) then
        call system_clock(t, tr, tmax)
        t_rate = 1.d0 / tr
@@ -272,6 +302,8 @@ contains
        call system_clock(t)
     end if
     r =  t * t_rate    
+#endif
   end function wclock
+
   
 end module class_stopwatch

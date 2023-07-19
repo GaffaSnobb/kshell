@@ -5,8 +5,10 @@ module constant
   implicit none
 
   ! configuration for program : kind
+  integer, parameter :: nmbit = 1  ! *** NA *** number of bit for kmbit 
   integer, parameter :: kmbit = 8  ! integer(kmbit) : m-scheme bit representation
   ! integer, parameter :: kmbit = 16  ! integer(kmbit) : m-scheme bit representation
+  integer, parameter :: nmlen = kmbit * 8 - 2
 
   ! configuration for program : kind
   integer, parameter :: kdim = 8   ! integer(kdim)  : dimension count 
@@ -38,8 +40,9 @@ module constant
   integer, parameter :: lunerr = 0
 
   ! MPI
-  integer :: mpi_kwf=-1, mpi_kdim=-1, mpi_kmbit=-1
-  ! integer, parameter :: mpi_cnk = 100000000
-  integer, parameter :: mpi_cnk = 260000000
+  integer :: mpi_kwf=-1, mpi_kdim=-1, mpi_kmbit=-1, mpi_nkmbit=1
+  ! integer, parameter :: mpi_cnk = 1000
+  integer, parameter :: mpi_cnk = 100000000
+  ! integer, parameter :: mpi_cnk = 260000000
 
 end module constant

@@ -7,7 +7,7 @@ module bridge_partitions
   use mpi 
 #endif
   use constant, only: kwf, kmbit, kdim, maxchar, c_no_init, &
-       mpi_kwf, mpi_kdim, mpi_kmbit, max_n_jorb
+       mpi_kwf, mpi_kdim, mpi_kmbit, mpi_nkmbit, max_n_jorb
   use model_space
   use partition, only: init_partition, type_ptn_pn, type_mbit, &
        bin_srch_nocc
@@ -33,7 +33,7 @@ module bridge_partitions
   public :: verbose_jj, verbose_h, print_time_operate_report, &
        dest, from, dealloc_shift_mpi_finalize
   public :: ndiml, ndimr, time_nth, time_nth_ptn, mympi_sendrecv
-  public :: wf_operate_twobody
+  public :: wf_operate_twobody, wf_operate_pppn_tbtd, wf_operate_tb_beta
 
 
   type type_ptn_split_info
@@ -51,18 +51,16 @@ module bridge_partitions
 
   integer :: verbose_h = 0, verbose_jj = 0
 
-!  integer, parameter :: nsplt_ptn = 2
-!  integer, parameter :: nsplt_ptn = 8
-!  integer, parameter :: nsplt_ptn = 32
-!  integer, parameter :: nsplt_ptn = 64
-  integer, parameter :: nsplt_ptn = 128
-!  integer, parameter :: nsplt_ptn = 192
-
+  ! integer, parameter :: npdim_thrd = 70000 ! 56Ni pf-shell
+  ! integer, parameter :: npdim_thrd = 250 ! semi magic
+  integer, parameter :: npdim_thrd = 2000 
+  ! integer(kdim), parameter :: npdim_thrd = 20000 ! 200 
+  
   ! working area for pn-int
-  ! integer, parameter :: max_npsize=100
-  integer, parameter :: max_npsize=2000 
-  ! integer, parameter :: max_npsize=5000  ! for large parallel, OFP
-  ! integer, parameter :: max_npsize=10000
+  ! integer, parameter :: max_npsize=2000
+  integer, parameter :: max_npsize=1000000
+
+  
   integer, allocatable  :: p_ik(:,:,:,:), n_jl(:,:,:,:)
   !  p_ik(3, max_npsize, 2, nt) 
   !    1:(i,k)  2:left-dim 3:right-dim  1:+ 2:-  n-thread
@@ -89,6 +87,8 @@ module bridge_partitions
   real(kwf), allocatable :: block_vltmp(:,:)
 
 
+  ! logical :: is_allgather_shift = .true.  ! for acceleration
+  logical :: is_allgather_shift = .false.
 
 contains
 
@@ -110,10 +110,16 @@ contains
     else
        stop "kdim error"
     end if
+    
     if (kmbit==4) then 
        mpi_kmbit = mpi_integer4
+       mpi_nkmbit = 1
     elseif (kmbit==8) then
        mpi_kmbit = mpi_integer8
+       mpi_nkmbit = 1
+    elseif (kmbit==16) then
+       mpi_kmbit = mpi_integer8
+       mpi_nkmbit = 2  ! ad hoc
     else
        stop "kmbit error"
     end if
@@ -151,16 +157,17 @@ contains
   end subroutine init_mpi_shift_reduce
   
 
-  subroutine init_bridge_partitions(self, ptnl, ptnr)
+  subroutine init_bridge_partitions(self, ptnl, ptnr, verbose)
     type(type_bridge_partitions), intent(inout) :: self
     type(type_ptn_pn), intent(in), target :: ptnl
     type(type_ptn_pn), intent(in), target, optional :: ptnr
+    logical, intent(in), optional :: verbose
     integer :: nt, mr, ml, i, j, n, se(2), &
          nsp(2), idl, idlp, idln, mmlp, mmln, ncnt
     integer, allocatable :: idl_itask(:)
     integer :: ndimp, ndimn, sdimp, sdimn
     integer, allocatable :: dim_itask(:,:)
-    integer(kdim) :: ndim_thrd
+    integer :: max_splt_ptn, ndim_thrd
     logical :: verb
 
     self%ptnl => ptnl
@@ -168,12 +175,13 @@ contains
     if (present(ptnr)) self%ptnr => ptnr
     nt = 1
     !$ nt = omp_get_max_threads()
-
+    max_splt_ptn = min(nt, 128)
 
     if (max_n_jorb < maxval(n_jorb)) stop "ERROR: increase max_n_jorb"
 
     verb = .false. 
-    if (verbose_h==0 .and. verbose_jj==0 .and. myrank==0) verb = .true.
+    if (present(verbose)) verb = verbose
+    if (myrank /= 0) verb = .false.
     if (verb) write(*,'(/,a,f10.3,a,i15)') &
             "max. working area for pn-int.: ", &
             max_npsize*48.d0*nt/1024.d0/1024.d0/1024.d0, "GB", max_npsize
@@ -190,25 +198,24 @@ contains
     end do
     
     if (.not. allocated(time_nth)) &
-         allocate(time_nth(0:nt-1), time_nth_ptn(0:nt-1))
+         allocate( time_nth(0:nt-1), time_nth_ptn(0:nt-1) )
 
     allocate( self%idl_se(2, 0:nprocs_reduce-1) )
     se = (/ ptnl%idl_start, ptnl%idl_end /)
 #ifdef MPI
+    if (verb .and. is_allgather_shift) write(*,*) 'mpi_allgather is used for pre-matvec'
     call mpi_allgather(se, 2, mpi_integer, self%idl_se, 2, mpi_integer, &
          mycomm_reduce, ierr)
 #else 
     self%idl_se(:,0) = se
 #endif /* MPI */
-    ndim_thrd = max( max_npsize / (maxval(jorb) + 1) , 1)
-    if (verb) write(*,'(a,i8)') 'maximum threshold dim. for working area', ndim_thrd
-    
+    ! ndim_thrd = max( max_npsize / (maxval(jorb) + 1) , 1)
+    ndim_thrd = max( (maxval( ptnl%max_ndim_pid_pn(:) ) - 1) / max_splt_ptn + 1, 200 )
+
     allocate( self%ml(0:nprocs_reduce-1) )
     ncnt = 0
     do ml = 0, nprocs_reduce - 1 
-       ! n = ( self%idl_se(2,ml)-self%idl_se(1,ml)+1 ) * nsplt_ptn**2
-       ! n = ( self%idl_se(2,ml)-self%idl_se(1,ml)+1 ) * nsplt_ptn ! ad hoc 
-       n = ( self%idl_se(2,ml)-self%idl_se(1,ml)+1 ) * nsplt_ptn * 2 ! ad hoc 
+       n = ( self%idl_se(2,ml)-self%idl_se(1,ml)+1 ) * max_splt_ptn * 5 ! ad hoc 
        allocate( idl_itask(n), dim_itask(4, n) ) 
        n = 0 
        do idl = self%idl_se(1,ml), self%idl_se(2,ml)
@@ -218,12 +225,16 @@ contains
           mmln = self%ptnl%mtotal - mmlp
           ndimp = self%ptnl%pn(1)%id(idlp)%mz(mmlp)%n 
           ndimn = self%ptnl%pn(2)%id(idln)%mz(mmln)%n 
-          nsp(1) = min( (ndimp - 1) / ndim_thrd + 1, nsplt_ptn )
-          nsp(2) = min( (ndimn - 1) / ndim_thrd + 1, nsplt_ptn )
-          if (nsp(1)==1 .and. nsp(2)==1 .and. ndimp*ndimn > 70000) then 
-             if (ndimp > 300) nsp(1) = 2
-             if (ndimn > 300) nsp(2) = 2
+          nsp(:) = 1
+          if (nsp(1)==1 .and. nsp(2)==1 .and. ndimp*ndimn > npdim_thrd) then 
+             nsp(1) = min( (ndimp - 1) / ndim_thrd + 1, max_splt_ptn )
+             nsp(2) = min( (ndimn - 1) / ndim_thrd + 1, max_splt_ptn )
           end if
+          
+!          if (verb .and. nsp(1) /= 1) write(*,'(a,i15,i8)') &
+!               "split partition proton  ", ndimp, nsp(1)
+!          if (verb .and. nsp(2) /= 1) write(*,'(a,i15,i8)') &
+!               "split partition neutron ", ndimn, nsp(2)
           
           sdimp = ndimp / nsp(1) + 1
           sdimn = ndimn / nsp(2) + 1
@@ -253,7 +264,7 @@ contains
 
     if (verb) then
        write(*,'(a,i15,a,i3)') "split partition threshold dim.",&
-            ndim_thrd, "  nsplt_ptn ", nsplt_ptn
+            ndim_thrd, "  max. # of split ptn ", max_splt_ptn
        write(*,'(a,i8,a,i12)') " # of split partitions ", &
             ncnt," / ",sum( (/(self%idl_se(2,ml)-self%idl_se(1,ml)+1, &
             ml = 0, nprocs_reduce - 1 )/) )
@@ -294,17 +305,21 @@ contains
     verb = .false.
     if (present(verbose)) verb = verbose
 
+    call print_mem_status('b01-bpop')
+
     if (verb) call start_stopwatch(time_tmp, is_reset=.true.)
 
     pl => self%ptnl
     pr => self%ptnr
-    if (op%nbody == 2 .and. (.not. associated(pl, pr))) stop "not implemented"
+    ! if (op%nbody == 2 .and. (.not. associated(pl, pr))) stop "not implemented"
     if (op%nbody == -10 .or. op%nbody == -11) then
        if ( self%ptnl%n_ferm(1) == self%ptnr%n_ferm(1) + 1 ) op%nbody = -10
        if ( self%ptnl%n_ferm(2) == self%ptnr%n_ferm(2) + 1 ) op%nbody = -11
     end if
     
     if ( allocated(op%mlmr) ) call finalize_bp_operator(self, op)
+
+    call print_mem_status('b02-bpop')
 
     allocate( op%mlmr(0:nprocs_reduce-1, 0:nprocs_shift-1) )
     do ml = 0, nprocs_reduce-1
@@ -316,6 +331,8 @@ contains
     ms1 = myrank_reduce * nprocs_shift 
     ms2 = (myrank_reduce + 1) * nprocs_shift - 1 
 
+    call print_mem_status('b03-bpop')
+
     do ml = 0, nprocs_reduce-1
        !$omp parallel do private(idl, n_idcnct, idcnct, mr, mm) &
        !$omp schedule (dynamic)
@@ -326,9 +343,10 @@ contains
              call ptn_connect_onebody( idl, n_idcnct, idcnct )
           else if (op%nbody == 2) then          
              call ptn_connect_twobody( idl, n_idcnct, idcnct )
+!             call ptn_connect_all( idl, n_idcnct, idcnct )
           else if (op%nbody == -10 .or. op%nbody == -11) then          
              call ptn_connect_ob_gt(   idl, n_idcnct, idcnct )
-          else if (op%nbody == -12 .or. op%nbody == -13) then 
+          else if (op%nbody == -12 .or. op%nbody == -13 .or. op%nbody == 13) then 
              call ptn_connect_tb_beta( idl, n_idcnct, idcnct )
           else if (op%nbody == -1 .or. op%nbody == -2) then
              call ptn_connect_one_crt( idl, n_idcnct, idcnct )
@@ -338,8 +356,11 @@ contains
              call ptn_connect_pn_crt( idl, n_idcnct, idcnct )
           else if (op%nbody == -6 .or. op%nbody == -7) then
              call ptn_connect_one_anh( idl, n_idcnct, idcnct )
-          else if (op%nbody ==  5) then  ! TBTD
+           else if (op%nbody == 5) then  ! TBTD
              call ptn_connect_twobody( idl, n_idcnct, idcnct )
+!             call ptn_connect_all( idl, n_idcnct, idcnct )
+          else if (op%nbody == 11) then  ! TBTD beta-
+             call ptn_connect_pppn( idl, n_idcnct, idcnct ) 
           else
              stop " not implemented init_bp_operator"
           end if
@@ -356,6 +377,8 @@ contains
           end do
        end do
     end do
+
+    call print_mem_status('b04-bpop')
 
 
     if (verb) then 
@@ -384,6 +407,7 @@ contains
     call mpi_allreduce(nptnc, max_nptnc, 1, mpi_kdim, mpi_max, &
          mpi_comm_world, ierr)
 #endif
+!    if (myrank==0) write(*,'(a,2i12)') &
     if (verb .and. myrank==0) write(*,'(a,2i12)') &
          " max/min # of connected ptns / proc", max_nptnc, min_nptnc
     if (is_debug) write(*,'(a,i12,a,i6)') &
@@ -392,6 +416,9 @@ contains
          write(*,'(/,a,f12.6,a,/)') 'init_bp_op allocated mem size', &
          max_nptnc*4./1024.d0/1024.d0/1024.d0, ' GB'
 
+    
+    call print_mem_status('b05-bpop')
+
 #ifdef MPI
     call mpi_barrier(mpi_comm_world, ierr)
     if (myrank==0 .and. verb) write(*,*)
@@ -399,13 +426,26 @@ contains
 
   contains
 
+
+    subroutine ptn_connect_all(idl, n_idcnct, idcnct)
+      ! all partitions are connected just for debugging
+      integer, intent(in) :: idl
+      integer, intent(out) :: idcnct(:,:), n_idcnct(:)
+      integer :: idrs, n, pnMr(3)
+
+      n_idcnct(:) = 0
+      do idrs = 1, size( pr%pidpnM_pid, 2)
+         call idrs_set_idcnct(idrs, n_idcnct, idcnct)
+      end do
+    end subroutine ptn_connect_all
+    
+
     subroutine ptn_connect_zerobody(idl, n_idcnct, idcnct)
       ! right partition of "idl", only for transformation (copy)
       integer, intent(in) :: idl
       integer, intent(out) :: idcnct(:,:), n_idcnct(:)
-      integer :: pnMl(3), pnMr(3), mr, ipn, idr, idrs, &
-           nocl(max_n_jorb, 2)
-      n_idcnct(:) = 0
+      integer :: pnMl(3), pnMr(3), mr, ipn, idr, idrs, nocl(max_n_jorb, 2)
+      n_idcnct(:) = 0 
       nocl(:,:) = 0
       pnMl = pl%pidpnM_pid(:,idl)
       do ipn = 1, 2
@@ -416,14 +456,11 @@ contains
       end do
       pnMr(3) = pnMl(3)
       call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
-      if (idrs == 0) return
-      idr = pr%pid_srt2dpl(idrs)
-      mr = pr%pid2rank(idr)
-      if (mr < ms1 .or. ms2 < mr) return
-      mr = mr - ms1 + 1
-      n_idcnct(mr) = 1
-      idcnct(1, mr) = idr
+      call idrs_set_idcnct(idrs, n_idcnct, idcnct)
+      
     end subroutine ptn_connect_zerobody
+
+
 
     subroutine ptn_connect_onebody(idl, n_idcnct, idcnct)
       ! right partition list connected to "idl" 
@@ -436,35 +473,24 @@ contains
            occd(max_n_jorb, 2)
 
       n_idcnct(:) = 0
+
       nocl(:,:) = 0
       pnMl = pl%pidpnM_pid(:,idl)
       do ipn = 1, 2
          nocl(:n_jorb(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
-         n_occd(ipn) = 0
-         do i = 1, n_jorb(ipn)
-            if (nocl(i, ipn) == 0) cycle
-            n_occd(ipn) = n_occd(ipn) + 1
-            occd(n_occd(ipn), ipn) = i
-         end do
          call bin_srch_nocc(nocl(:n_jorb(ipn), ipn), &
               pr%pn(ipn)%nocc, pnMl(ipn))
       end do
+      call set_occd(nocl, n_occd, occd)
 
       ! 0p0h one-body 
       do ipn = 1, 2
          if (pnMl(3-ipn) == 0) cycle
          pnMr = pnMl
          if (ipn == 1) pnMr(3) = pnMl(3) - pl%mtotal + pr%mtotal
-         if (ipn == 1 .and. pnMr(3)==pnMl(3)) cycle
+         if (ipn == 1 .and. pnMr(3) == pnMl(3)) cycle
          call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
-         if (idrs == 0) cycle
-         idr = pr%pid_srt2dpl(idrs)
-         mr = pr%pid2rank(idr)
-         if (mr < ms1 .or. ms2 < mr) cycle
-         mr = mr - ms1 + 1
-         n_idcnct(mr) = n_idcnct(mr) + 1
-         if (n_idcnct(mr) > size(idcnct,1)) stop 'increase size of idcnct'
-         idcnct(n_idcnct(mr), mr) = idr
+         call idrs_set_idcnct(idrs, n_idcnct, idcnct)
       end do
       ! 1p1h one-body
       do ipn = 1, 2
@@ -483,14 +509,7 @@ contains
                if (pnMr(ipn) == 0) cycle
                if (ipn == 1) pnMr(3) = pnMl(3) - pl%mtotal + pr%mtotal
                call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
-               if (idrs==0) cycle
-               idr = pr%pid_srt2dpl(idrs)
-               mr = pr%pid2rank(idr)
-               if (mr < ms1 .or. ms2 < mr) cycle
-               mr = mr - ms1 + 1
-               n_idcnct(mr) = n_idcnct(mr) + 1
-               if (n_idcnct(mr) > size(idcnct,1)) stop 'increase size of idcnct'
-               idcnct(n_idcnct(mr), mr) = idr
+               call idrs_set_idcnct(idrs, n_idcnct, idcnct)
              end do
          end do
       end do
@@ -510,43 +529,38 @@ contains
       pnMl = pl%pidpnM_pid(:,idl)
       do ipn = 1, 2
          nocl(:n_jorb(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
-         n_occd(ipn) = 0
-         do i = 1, n_jorb(ipn)
-            if (nocl(i, ipn) == 0) cycle
-            n_occd(ipn) = n_occd(ipn) + 1
-            occd(n_occd(ipn), ipn) = i
-         end do
+         call bin_srch_nocc(nocl(:n_jorb(ipn), ipn), & ! for TBTD
+              pr%pn(ipn)%nocc, pnMl(ipn))
       end do
+      call set_occd(nocl, n_occd, occd)
 
       ! 0p0h 
       pnMr = pnMl
-      min_mp = max( pr%pn(1)%id(pnMr(1))%min_m, &
-           pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m )
-      max_mp = min( pr%pn(1)%id(pnMr(1))%max_m, &
-           pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m )
-      pnMr(3) = min_mp
-      call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
-      do mm = min_mp, max_mp, 2
-         if (op%is_j_square) then
-            if (abs(pnMl(3)-mm) > 2) then
-               idrs = idrs + 1
-               cycle
+      if (pnMr(1)/=0 .and. pnMr(2) /= 0) then ! for TBTD negative parity
+         min_mp = max( pr%pn(1)%id(pnMr(1))%min_m, &
+              pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m )
+         max_mp = min( pr%pn(1)%id(pnMr(1))%max_m, &
+              pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m )
+         pnMr(3) = min_mp
+         call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
+         if (idrs == 0) max_mp = min_mp - 2 ! cycle for TBTD
+         do mm = min_mp, max_mp, 2
+            if (op%is_j_square) then
+               if (abs(pnMl(3)-mm) > 2) then
+                  idrs = idrs + 1
+                  cycle
+               end if
             end if
-         end if
-         idr = pr%pid_srt2dpl(idrs)
-         mr = pr%pid2rank(idr)
-         idrs = idrs + 1
-         if (mr < ms1 .or. ms2 < mr) cycle
-         mr = mr - ms1 + 1
-         n_idcnct(mr) = n_idcnct(mr) + 1
-         if (n_idcnct(mr) > size(idcnct,1)) stop 'increase size of idcnct'
-         idcnct(n_idcnct(mr), mr) = idr
-      end do
+            call idrs_set_idcnct(idrs, n_idcnct, idcnct)
+            idrs = idrs + 1
+         end do
+      end if
 
       if (op%is_j_square) return ! only 0p0h is allowed in JJ operator
       
       ! 1p1h of proton, and 1p1h of neutron (pp-,nn-,pn-int.)
       do ipn = 1, 2
+         if (pnMl(3-ipn)==0) cycle ! for TBTD negative parity
          do i = 1, n_occd(ipn)
             n1 = occd(i, ipn)
             do n3 = 1, n_jorb(ipn)
@@ -563,19 +577,13 @@ contains
                     pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m)
                max_mp = min( pr%pn(1)%id(pnMr(1))%max_m, &
                     pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m)
-               if (min_mp>max_mp) cycle
+               if (min_mp > max_mp) cycle
                pnMr(3) = min_mp
                call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
                if (idrs==0) cycle
                do mm = min_mp, max_mp, 2
-                  idr = pr%pid_srt2dpl(idrs)
-                  mr  = pr%pid2rank(idr)
+                  call idrs_set_idcnct(idrs, n_idcnct, idcnct)
                   idrs = idrs + 1
-                  if (mr < ms1 .or. ms2 < mr) cycle
-                  mr = mr - ms1 + 1
-                  n_idcnct(mr) = n_idcnct(mr) + 1
-                  if (n_idcnct(mr) > size(idcnct,1)) stop 'increase size of idcnct'
-                  idcnct(n_idcnct(mr), mr) = idr
                end do
             end do
          end do
@@ -616,19 +624,11 @@ contains
                   call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
                   if (idrs==0) cycle
                   do mm = min_mp, max_mp, 2
-                     idr = pr%pid_srt2dpl(idrs)
                      idrs = idrs + 1
-                     mr = pr%pid2rank(idr)
-                     if ( abs(pnMl(3)-mm)/2 &
-                          > ubound(op%nocc2b(3,n1,n2,n3,n4)%m, 1) ) cycle
-                     if (.not. allocated( &
-                          op%nocc2b(3,n1,n2,n3,n4)%m( &
-                          (pnMl(3)-mm)/2 )%v ) ) cycle
-                     if (mr < ms1 .or. ms2 < mr) cycle
-                     mr = mr - ms1 + 1
-                     n_idcnct(mr) = n_idcnct(mr) + 1
-                     if (n_idcnct(mr) > size(idcnct,1)) stop 'increase size of idcnct'
-                     idcnct(n_idcnct(mr), mr) = idr
+                     if ( (pnMl(3)-mm)/2  > ubound(op%nocc2b(3,n1,n2,n3,n4)%m, 1) ) cycle 
+                     if ( (pnMl(3)-mm)/2  < lbound(op%nocc2b(3,n1,n2,n3,n4)%m, 1) ) cycle 
+                     if ( .not. allocated( op%nocc2b(3,n1,n2,n3,n4)%m( (pnMl(3)-mm)/2 )%v) ) cycle
+                     call idrs_set_idcnct(idrs-1, n_idcnct, idcnct)
                   end do
                end do
             end do
@@ -652,6 +652,7 @@ contains
                      if (.not. allocated( op%nocc2b(ipn,n1,n2,n3,n4)%m ) ) cycle
                      nocr = nocm
                      nocr(n3, ipn) = nocr(n3, ipn) + 1
+                     if (nocr(n3, ipn) > jorbn(n3, ipn)+1) cycle
                      nocr(n4, ipn) = nocr(n4, ipn) + 1
                      if (nocr(n4, ipn) > jorbn(n4, ipn)+1) cycle
                      pnMr = pnMl
@@ -662,14 +663,7 @@ contains
                           pr%pn(ipn)%nocc, pnMr(ipn))
                      if (pnMr(ipn)==0) cycle
                      call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
-                     if (idrs==0) cycle
-                     idr = pr%pid_srt2dpl(idrs)
-                     mr  = pr%pid2rank(idr)
-                     if (mr < ms1 .or. ms2 < mr) cycle
-                     mr = mr - ms1 + 1
-                     n_idcnct(mr) = n_idcnct(mr) + 1
-                     if (n_idcnct(mr) > size(idcnct,1)) stop 'increase size of idcnct'
-                     idcnct(n_idcnct(mr), mr) = idr
+                     call idrs_set_idcnct(idrs, n_idcnct, idcnct)
                   end do
                end do
             end do
@@ -728,19 +722,8 @@ contains
                   call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
                   if (idrs==0) cycle
                   do mm = min_mp, max_mp, 2
-                     idr = pr%pid_srt2dpl(idrs)
+                     call idrs_set_idcnct(idrs, n_idcnct, idcnct)
                      idrs = idrs + 1
-                     if ( abs(pnMl(3)-mm)/2 &
-                          > ubound(op%nocc2b(1,n1,n2,n3,n4)%m, 1) ) cycle
-                     if (.not. allocated( &
-                          op%nocc2b(1,n1,n2,n3,n4)%m( &
-                          (pnMl(3)-mm)/2 )%v ) ) cycle
-                     mr = pr%pid2rank(idr)
-                     if (mr < ms1 .or. ms2 < mr) cycle
-                     mr = mr - ms1 + 1
-                     n_idcnct(mr) = n_idcnct(mr) + 1
-                     if (n_idcnct(mr) > size(idcnct,1)) stop 'increase size of idcnct'
-                     idcnct(n_idcnct(mr), mr) = idr
                   end do
 
                end do
@@ -804,14 +787,8 @@ contains
             call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
             if (idrs==0) cycle
             do mm = min_mp, max_mp, 2
-               idr = pr%pid_srt2dpl(idrs)
+               call idrs_set_idcnct(idrs, n_idcnct, idcnct)
                idrs = idrs + 1
-               mr = pr%pid2rank(idr)
-               if (mr < ms1 .or. ms2 < mr) cycle
-               mr = mr - ms1 + 1
-               n_idcnct(mr) = n_idcnct(mr) + 1
-               if (n_idcnct(mr) > size(idcnct,1)) stop 'increase size of idcnct'
-               idcnct(n_idcnct(mr), mr) = idr
             end do
          end do
       end do
@@ -852,15 +829,7 @@ contains
          if (pnMr(ipn)==0) return
       end do
       call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
-      if (idrs==0) return
-      idr = pr%pid_srt2dpl(idrs)
-      idrs = idrs + 1
-      mr = pr%pid2rank(idr)
-      if (mr < ms1 .or. ms2 < mr) return
-      mr = mr - ms1 + 1
-      n_idcnct(mr) = n_idcnct(mr) + 1
-      if (n_idcnct(mr) > size(idcnct,1)) stop 'increase size of idcnct'
-      idcnct(n_idcnct(mr), mr) = idr
+      call idrs_set_idcnct(idrs, n_idcnct, idcnct)
     end subroutine ptn_connect_one_crt
 
 
@@ -902,6 +871,7 @@ contains
       do n1 = 1, n_jorb(ipn)
          do n2 = 1, n_jorb(ipn)
             if (.not. allocated( op%nocc1b(ipn, n1, n2)%m )) cycle
+            if (.not. allocated( op%nocc1b(ipn, n1, n2)%m( mp/2 )%v ) ) cycle
             nocr(:,ipn) = nocl(:,ipn)
             nocr(n1, ipn) = nocr(n1, ipn) - 1
             if (nocr(n1, ipn) < 0) cycle
@@ -910,18 +880,8 @@ contains
             call bin_srch_nocc( nocr(:n_jorb(ipn), ipn), &
                  pr%pn(ipn)%nocc, pnMr(ipn) )
             if (pnMr(ipn) == 0) cycle
-
             call bin_srch_nocc( pnMr, pr%pidpnM_pid_srt, idrs )
-            if (idrs==0) cycle
-            idr = pr%pid_srt2dpl(idrs)
-            if (.not. allocated( op%nocc1b(ipn, n1, n2)%m( mp/2 )%v ) ) cycle
-
-            mr = pr%pid2rank(idr)
-            if (mr < ms1 .or. ms2 < mr) cycle
-            mr = mr - ms1 + 1
-            n_idcnct(mr) = n_idcnct(mr) + 1
-            if (n_idcnct(mr) > size(idcnct,1)) stop 'increase size of idcnct'
-            idcnct(n_idcnct(mr), mr) = idr
+            call idrs_set_idcnct(idrs, n_idcnct, idcnct)
          end do
       end do
 
@@ -973,15 +933,8 @@ contains
             call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
             if (idrs==0) cycle
             do mm = min_mp, max_mp, 2
-               ! cycle by operator range?
-               idr = pr%pid_srt2dpl(idrs)
-               mr  = pr%pid2rank(idr)
+               call idrs_set_idcnct(idrs, n_idcnct, idcnct)
                idrs = idrs + 1
-               if (mr < ms1 .or. ms2 < mr) cycle
-               mr = mr - ms1 + 1
-               n_idcnct(mr) = n_idcnct(mr) + 1
-               if (n_idcnct(mr) > size(idcnct,1)) stop 'increase size of idcnct'
-               idcnct(n_idcnct(mr), mr) = idr
             end do
          end do outer
       end do
@@ -1022,16 +975,195 @@ contains
          if (pnMr(ipn)==0) return
       end do
       call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
-      if (idrs==0) return
+      call idrs_set_idcnct(idrs, n_idcnct, idcnct)
+    end subroutine ptn_connect_one_anh
+
+    
+    subroutine ptn_connect_pppn(idl, n_idcnct, idcnct)
+      ! two-body beta decay operator
+      ! cp+ cp+ cp cn   and   cp+ cn+ cn cn
+      integer, intent(in) :: idl
+      integer, intent(out) :: idcnct(:,:), n_idcnct(:)
+      integer :: n1, n2, n3, n4, i, j, pnMl(3), pnMr(3), &
+           mi, mj, max_mp, min_mp, mm, mr, ipn, idr, idrs, &
+           nocl(max_n_jorb, 2), nocr(max_n_jorb, 2)
+
+      n_idcnct(:) = 0
+      nocl(:,:) = 0
+      pnMl = pl%pidpnM_pid(:,idl)
+      do ipn = 1, 2
+         nocl(:n_jorb(ipn), ipn) = pl%pn(ipn)%nocc(:, pnMl(ipn))
+      end do
+
+      ! 1p1h
+      do n1 = 1, n_jorb(1)
+         nocr(:, 1)  = nocl(:, 1)
+         nocr(n1, 1) = nocr(n1, 1) - 1
+         if (nocr(n1, 1) < 0) cycle
+               
+         call bin_srch_nocc( nocr(:n_jorb(1), 1), &
+              pr%pn(1)%nocc, pnMr(1) )
+         if (pnMr(1)==0) cycle
+            
+         do n4 = 1, n_jorb(2)
+            nocr(:, 2) = nocl(:, 2)
+            nocr(n4, 2) = nocr(n4, 2) + 1
+            if (nocr(n4,2) > jorbn(n4,2)+1) cycle
+                  
+            call bin_srch_nocc(nocr(:n_jorb(2), 2), &
+                 pr%pn(2)%nocc, pnMr(2))
+            if (pnMr(2)==0) cycle
+                  
+            min_mp = max( pr%pn(1)%id(pnMr(1))%min_m, &
+                 pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m)
+            max_mp = min( pr%pn(1)%id(pnMr(1))%max_m, &
+                 pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m)
+            if (min_mp > max_mp) cycle
+            pnMr(3) = min_mp
+            call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
+            if (idrs==0) cycle
+            do mm = min_mp, max_mp, 2
+               call idrs_set_idcnct(idrs, n_idcnct, idcnct)
+               idrs = idrs + 1
+            end do
+         end do
+      end do
+
+      ! pppn 
+      do n1 = 1, n_jorb(1)
+         do n2 = n1, n_jorb(1)
+            do n3 = 1, n_jorb(1)
+               if ( n1 == n3  .or. n2 == n3 ) cycle
+               nocr(:,1) = nocl(:,1)
+               nocr(n1, 1) = nocr(n1, 1) - 1
+               if (nocr(n1, 1) < 0) cycle
+               nocr(n2, 1) = nocr(n2, 1) - 1
+               if (nocr(n2, 1) < 0) cycle
+               nocr(n3, 1) = nocr(n3, 1) + 1
+               if (nocr(n3, 1) > jorbn(n3,1)+1) cycle
+               
+               call bin_srch_nocc( nocr(:n_jorb(1), 1), &
+                    pr%pn(1)%nocc, pnMr(1) )
+               if (pnMr(1)==0) cycle
+            
+               do n4 = 1, n_jorb(2)
+                  nocr(:,2) = nocl(:,2)
+                  nocr(n4, 2) = nocr(n4, 2) + 1
+                  if (nocr(n4,2) > jorbn(n4,2)+1) cycle
+                  
+                  if (.not. allocated(op%nocc2b(1,n1,n2,n3,n4)%m)) cycle
+                  
+                  call bin_srch_nocc(nocr(:n_jorb(2), 2), &
+                       pr%pn(2)%nocc, pnMr(2))
+                  if (pnMr(2)==0) cycle
+                  
+                  min_mp = max( pr%pn(1)%id(pnMr(1))%min_m, &
+                       pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m)
+                  max_mp = min( pr%pn(1)%id(pnMr(1))%max_m, &
+                       pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m)
+                  if (min_mp > max_mp) cycle
+                  pnMr(3) = min_mp
+                  call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
+                  if (idrs==0) cycle
+
+                  do mm = min_mp, max_mp, 2
+                     call idrs_set_idcnct(idrs, n_idcnct, idcnct)
+                     idrs = idrs + 1
+                     ! if ( pnMl(3)-mm < lbound(op%nocc2b(1,n1,n2,n3,n4)%m, 1)) cycle
+                     ! if ( pnMl(3)-mm > ubound(op%nocc2b(1,n1,n2,n3,n4)%m, 1)) cycle
+                     ! if (.not. allocated( op%nocc2b(1,n1,n2,n3,n4)%m( pnMl(3)-mm )%v ) ) cycle
+                  end do
+
+               end do
+            end do
+         end do
+      end do
+
+
+      ! pnnn
+      do n1 = 1, n_jorb(1)
+         nocr(:,1) = nocl(:,1)
+         nocr(n1, 1) = nocr(n1, 1) - 1
+         if (nocr(n1, 1) < 0) cycle
+         call bin_srch_nocc( nocr(:n_jorb(1), 1), &
+              pr%pn(1)%nocc, pnMr(1) )
+         if (pnMr(1)==0) cycle
+         
+         do n2 = 1, n_jorb(2)
+            do n3 = 1, n_jorb(2)
+               do n4 = n3, n_jorb(2)
+                  if ( n2 == n3  .or. n2 == n4 ) cycle
+                  nocr(:,2) = nocl(:,2)
+                  nocr(n2, 2) = nocr(n2, 2) - 1
+                  if (nocr(n2, 2) < 0) cycle
+                  nocr(n3, 2) = nocr(n3, 2) + 1
+                  if (nocr(n3, 2) > jorbn(n3, 2) + 1) cycle
+                  nocr(n4, 2) = nocr(n4, 2) + 1
+                  if (nocr(n4, 2) > jorbn(n4, 2) + 1) cycle
+                  
+                  if (.not. allocated(op%nocc2b(2,n1,n2,n3,n4)%m)) cycle
+                  
+                  call bin_srch_nocc(nocr(:n_jorb(2), 2), &
+                       pr%pn(2)%nocc, pnMr(2))
+                  if (pnMr(2)==0) cycle
+                  
+                  min_mp = max( pr%pn(1)%id(pnMr(1))%min_m, &
+                       pr%mtotal - pr%pn(2)%id(pnMr(2))%max_m)
+                  max_mp = min( pr%pn(1)%id(pnMr(1))%max_m, &
+                       pr%mtotal - pr%pn(2)%id(pnMr(2))%min_m)
+                  if (min_mp > max_mp) cycle
+                  pnMr(3) = min_mp
+                  call bin_srch_nocc(pnMr, pr%pidpnM_pid_srt, idrs)
+                  if (idrs==0) cycle
+                  do mm = min_mp, max_mp, 2
+                     call idrs_set_idcnct(idrs, n_idcnct, idcnct)
+                     idrs = idrs + 1
+                     !if ( pnMl(3)-mm > ubound(op%nocc2b(2,n1,n2,n3,n4)%m, 1)) cycle
+                     !if ( pnMl(3)-mm < lbound(op%nocc2b(2,n1,n2,n3,n4)%m, 1)) cycle
+                     !if (.not. allocated( &
+                     !     op%nocc2b(2,n1,n2,n3,n4)%m( pnMl(3)-mm )%v ) ) cycle
+                  end do
+               end do
+            end do
+         end do
+      end do
+      
+    end subroutine ptn_connect_pppn
+
+
+
+    subroutine set_occd(nocc, n_occd, occd)
+      ! set indeces of occupied orbits 
+      integer, intent(in) :: nocc(:,:)
+      integer, intent(out) :: n_occd(:), occd(:,:)
+      integer :: ipn, i
+
+      do ipn = 1, 2
+         n_occd(ipn) = 0
+         do i = 1, n_jorb(ipn)
+            if (nocc(i, ipn) == 0) cycle
+            n_occd(ipn) = n_occd(ipn) + 1
+            occd(n_occd(ipn), ipn) = i
+         end do
+      end do
+    end subroutine set_occd
+
+
+    subroutine idrs_set_idcnct(idrs, n_idcnct, idcnct)
+      integer, intent(in) :: idrs
+      integer, intent(inout) :: n_idcnct(:), idcnct(:,:)
+      integer :: idr, mr
+      
+      if (idrs == 0) return
       idr = pr%pid_srt2dpl(idrs)
-      idrs = idrs + 1
       mr = pr%pid2rank(idr)
       if (mr < ms1 .or. ms2 < mr) return
       mr = mr - ms1 + 1
       n_idcnct(mr) = n_idcnct(mr) + 1
       if (n_idcnct(mr) > size(idcnct,1)) stop 'increase size of idcnct'
       idcnct(n_idcnct(mr), mr) = idr
-    end subroutine ptn_connect_one_anh
+    end subroutine idrs_set_idcnct
+    
 
   end subroutine init_bp_operator
 
@@ -1061,17 +1193,17 @@ contains
     do i = 0, nprocs_reduce-1
        if (i == myrank_reduce) cycle
        if ( associated( vec_reduce(i)%p ) ) then
-          if (size(vec_reduce(i)%p, kind=kdim) /= ndiml) &
-               deallocate(vec_reduce(i)%p)
+          if ( size(vec_reduce(i)%p, kind=kdim) /= ndiml ) &
+               deallocate( vec_reduce(i)%p )
        end if
        if ( associated( vec_reduce(i)%p ) ) cycle
        call allocate_l_vec( vec_reduce(i)%p, ndiml )
     end do
-    !  do i = 1, nprocs_shift - 1
+    ! do i = 1, nprocs_shift - 1
     do i = 1, nv_shift - 1
        if ( associated( vec_shift(i)%p ) ) then
           if (size(vec_shift(i)%p, kind=kdim) /= ndimr) &
-               deallocate(vec_shift(i)%p)
+               deallocate( vec_shift(i)%p )
        end if
        if ( associated( vec_shift(i)%p ) ) cycle
        call allocate_l_vec( vec_shift(i)%p, ndimr )
@@ -1089,6 +1221,7 @@ contains
     integer :: i
     nullify( vec_shift(0)%p )
 #ifdef MPI
+    ! do i = 1, nprocs_shift-1
     do i = 1, nv_shift-1
        if (.not. associated( vec_shift(i)%p )) cycle
        call deallocate_l_vec( vec_shift(i)%p )
@@ -1115,6 +1248,8 @@ contains
     logical, intent(in), optional :: is_bcast ! for bp_ex_vals
     integer :: i, destl, froml, md, mf
     integer(kdim) :: mq
+    real(kwf), allocatable :: t(:,:)
+
     is_bcast_lwf = .false. 
     if ( present(is_bcast) ) is_bcast_lwf = is_bcast
 
@@ -1143,7 +1278,7 @@ contains
        end do
     else
        do i = 0, nprocs_reduce-1
-          if (i==myrank_reduce) cycle
+          if (i == myrank_reduce) cycle
           !$omp parallel do private(mq)
           do mq = 1, size(vl%p, kind=kdim)
              vec_reduce(i)%p(mq) = 0._kwf
@@ -1153,13 +1288,34 @@ contains
 
     if (verb) call start_stopwatch(time_wait)
 
-    nv_shift_last = nv_shift - 1
-    ! do i = 0, nprocs_shift - 2
-    do i = 0, nv_shift_last - 1
-       call mympi_sendrecv( &
-            vec_shift(i)%p, vec_shift(i+1)%p, &
-            ndimr, dest, from, mycomm_shift)
-    end do
+    if (nv_shift /= nprocs_shift) is_allgather_shift = .false.
+    
+    if (is_allgather_shift) then
+
+       nv_shift_last = nv_shift - 1
+       call mympi_allgather_shift(ndimr, mycomm_shift)
+
+       ! ! allgather acceleration, memory required, TODO mpi_cnk
+       ! allocate( t(ndimr, nprocs_shift) )
+       ! call mpi_allgather( vec_shift(0)%p, ndimr, mpi_kwf, &
+       !      t, ndimr, mpi_kwf, mycomm_shift, ierr)
+       ! do i = 1, nprocs_shift - 1
+       !    vec_shift(i)%p = t(:, modulo(myrank_shift - i, nprocs_shift) + 1 )
+       ! end do
+       ! deallocate( t )
+
+    else
+       
+       ! original
+       nv_shift_last = nv_shift - 1
+       ! do i = 0, nprocs_shift - 2
+       do i = 0, nv_shift_last - 1
+          call mympi_sendrecv( &
+               vec_shift(i)%p, vec_shift(i+1)%p, &
+               ndimr, dest, from, mycomm_shift)
+       end do
+
+    end if
 
     if (verb) call stop_stopwatch(time_wait)
 
@@ -1173,9 +1329,17 @@ contains
     logical, intent(in) :: verb
 #ifdef MPI
     integer :: i
+
+    if (is_allgather_shift) then
+       nv_shift_last = min(nv_shift, nprocs_shift-jv_shift-1) - 1
+       if (nv_shift_last < 0) nv_shift_last = 0
+       return 
+    end if
+    
     if (verb) call start_stopwatch(time_wait)
     call mympi_sendrecv( &
          vec_shift(nv_shift_last)%p, vec_shift(0)%p, &
+!         vec_shift(nv_shift-1)%p, vec_shift(0)%p, &
          ndimr, dest, from, mycomm_shift)
 
     nv_shift_last = min(nv_shift, nprocs_shift-jv_shift-1) - 1
@@ -1200,28 +1364,34 @@ contains
     integer :: i, ml
     integer(kdim) :: mq
     integer :: destl, froml
+
     nullify( vec_shift(0)%p )
 
 #ifdef MPI
     call start_stopwatch(time_mpi_fin)
 
+
     if (.not. is_bcast_lwf) then
        ndiml = size(vec_reduce(0)%p ,kind=kdim)
+!!! mpi_reduce was replaced by mpi_sendrecv + OpenMP sum
        destl = modulo(myrank_reduce + 1, nprocs_reduce)
        froml = modulo(myrank_reduce - 1, nprocs_reduce)
-       do i = 1, nprocs_reduce-1
+       do i = 1, nprocs_reduce - 1
           ml = modulo(myrank_reduce - i, nprocs_reduce)
           call start_stopwatch(time_wait)
           call mympi_sendrecv( &
                vec_reduce(ml)%p, vltmp%p, &
                ndiml, destl, froml, mycomm_reduce )
           call stop_stopwatch(time_wait)
+
+
           ml = modulo(ml - 1, nprocs_reduce)
           !$omp parallel do
           do mq = 1, ndiml
              vec_reduce(ml)%p(mq) = vec_reduce(ml)%p(mq) + vltmp%p(mq)
           end do
        end do
+!       nullify(vec_reduce(myrank_reduce)%p)
     end if
 
     call stop_stopwatch(time_mpi_fin)
@@ -1230,6 +1400,7 @@ contains
     nullify(vec_reduce(myrank_reduce)%p)
   end subroutine shift_mpi_finalize
 
+  
   subroutine mympi_sendrecv(vdest, vfrom, ndim, dest, from, mycomm)
     use constant, only : max_int4, mpi_cnk
     real(kwf), intent(inout) :: vdest(*), vfrom(*)
@@ -1239,6 +1410,10 @@ contains
     integer(kdim) :: icnk
     integer :: ld, ierr, mympi_stat(mpi_status_size)
     
+    ! call mpi_sendrecv( &
+    !      vdest(1), ndim, mpi_kwf, dest, 0, &
+    !      vfrom(1), ndim, mpi_kwf, from, 0, &
+    !      mycomm, mympi_stat, ierr )
     do icnk = 1, ndim, mpi_cnk
        ld = int( min(mpi_cnk, ndim - icnk + 1), kind=4)
        call mpi_sendrecv( &
@@ -1250,6 +1425,39 @@ contains
 #endif /* MPI */
     
   end subroutine mympi_sendrecv
+
+
+  subroutine mympi_allgather_shift(ndim, mycomm)
+    use constant, only : mpi_cnk
+    integer(kdim), intent(in) :: ndim
+    integer, intent(in) :: mycomm
+#ifdef MPI
+    integer(kdim) :: icnk, mq, ldr
+    integer :: ld, i, k, ierr
+    real(kwf), allocatable :: t(:)
+    
+    allocate( t( min(ndim, mpi_cnk) * nprocs_shift ) )
+
+    do icnk = 1, ndim, mpi_cnk
+       ld = min(mpi_cnk, ndim - icnk + 1)
+       call mpi_allgather( vec_shift(0)%p(icnk:icnk+ld-1), ld, mpi_kwf, &
+            t, ld, mpi_kwf, mycomm, ierr)
+       if (ierr /= 0) write(*,*) 'ERROR: mpi_allgather',myrank,ierr,icnk, ld
+
+       do i = 1, nprocs_shift - 1
+          ldr = ld * modulo(myrank_shift - i, nprocs_shift) +1
+          !$omp parallel do
+          do mq = 0, ld-1
+             vec_shift(i)%p( icnk + mq ) = t( ldr + mq )
+          end do
+       end do
+    end do
+
+    deallocate( t )
+#endif /* MPI */
+    
+  end subroutine mympi_allgather_shift
+
 
 
 
@@ -1468,7 +1676,27 @@ contains
              !$omp end do nowait
           end do
           !$omp end parallel
+          
+       elseif (op%nbody == -6 .or. op%nbody == -7) then
 
+          !$omp parallel private(ml, idl, mr, myrank_right, i, idr)
+          do ml = 0, nprocs_reduce-1
+             !$omp do schedule(dynamic)
+             do idl = self%idl_se(1,ml), self%idl_se(2,ml)
+                do mr = iv_shift, jv_shift
+                   myrank_right = modulo(myrank-mr, nprocs_shift)
+                   do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
+                      idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
+                      call wf_operate_one_anh(self%ptnl, self%ptnr, &
+                           op, idl, idr, vec_reduce(ml)%p, &
+                           vec_shift(mr-iv_shift)%p)
+                   end do
+                end do
+             end do
+             !$omp end do nowait
+          end do
+          !$omp end parallel
+          
        end if
 
        call shift_mpi_middle(jv_shift, verb)
@@ -1518,7 +1746,7 @@ contains
        end do
     end if
 
-    if (myrank==0 .and. nprocs>1) then 
+    if (myrank == 0 .and. nprocs > 1) then 
        write(*,'(a,i5,f10.5)') "mpi shift time init : ", &
             myrank, time_tmpi_init%time
        write(*,'(a,i5,f10.5)') "mpi shift time finl : ", &
@@ -1531,24 +1759,27 @@ contains
     !$ nt = omp_get_max_threads()
     time_ope_cpu%time = sum_time_ptn()/nt
 
+!    print "(A, 1i5, F10.3, a, f10.3, a, f10.3)", "      operate time:", myrank, &
+!         time_oper_tmp%time, "   cpu run:", time_ope_cpu%time, "  wait time:", time_wait%time
+
 
 #ifdef MPI
     call mpi_allreduce(time_tmpi_init%time, rmax, 1, mpi_real8, &
          mpi_max, mpi_comm_world, ierr)
-    if(myrank==0) write(*,'(a,f10.5)') "max mpi shift time init ",rmax
+    if(myrank==0) write(*,'(a,f10.5)') "max mpi shift time init ", rmax
 
     call mpi_allreduce(time_tmpi_fin%time, rmax, 1, mpi_real8, &
          mpi_max, mpi_comm_world, ierr)
-    if(myrank==0) write(*,'(a,f10.5)') "max mpi shift time finl ",rmax
+    if(myrank==0) write(*,'(a,f10.5)') "max mpi shift time finl ", rmax
 
     call mpi_allreduce(time_tmp%time, rmax, 1, mpi_real8, &
          mpi_max, mpi_comm_world, ierr)
-    if(myrank==0) write(*,'(a,f10.5)') "max time tmp ",rmax
+    if(myrank==0) write(*,'(a,f10.5)') "max time tmp ", rmax
 
     t = tmax
     call mpi_allreduce(t, tmax, 1, mpi_real8, &
          mpi_max, mpi_comm_world, ierr)
-    if(myrank==0) write(*,'(a,f10.5)') "max time / a (split) partition",tmax
+    if(myrank==0) write(*,'(a,f10.5)') "max time / a (split) partition", tmax
 
 
     call mpi_allreduce(time_oper_tmp%time, rmax, 1, mpi_real8, &
@@ -1759,6 +1990,8 @@ contains
       if (ptnr%pn(2)%nocc(n4, idrn) == 0) return
       mdp = (mmlp-mmrp)/2
       mdn = (mmln-mmrn)/2
+      ! if (abs(mdp) > ubound(idx_nocc2b(1, n1, n3)%md, 1)) return
+      ! if (abs(mdn) > ubound(idx_nocc2b(2, n2, n4)%md, 1)) return
       if (mdp > ubound(idx_nocc2b(1, n1, n3)%md, 1)) return
       if (mdp < lbound(idx_nocc2b(1, n1, n3)%md, 1)) return
       if (mdn > ubound(idx_nocc2b(2, n2, n4)%md, 1)) return
@@ -1842,6 +2075,21 @@ contains
               vtl, vtr, npdim)
       end do
       
+      ! maxm = min(ubound(idx_nocc2b(1, n1, n2)%mp, 1), &
+      !      ubound(idx_nocc2b(1, n3, n4)%mp, 1))
+
+      ! do mm = -maxm, maxm
+      !    if (.not. allocated( op%nocc2b(1, n1, n2, n3, n4)%m(mm)%v )) cycle
+      !    call operate_partition_ppint( &
+      !         ptn%pn(1)%id(idlp)%mz(mmlp), &
+      !         ptn%pn(2)%id(idln)%mz(mmln), &
+      !         ptn%pn(1)%id(idrp)%mz(mmrp), &
+      !         ptn%pn(2)%id(idrn)%mz(mmrn), &
+      !         idx_nocc2b(1, n1, n2)%mp(mm)%idx, &
+      !         idx_nocc2b(1, n3, n4)%mp(mm)%idx, &
+      !         op%nocc2b(1, n1, n2, n3, n4)%m(mm)%v, &
+      !         vtl, vtr, npdim)
+      ! end do
     end subroutine op_ppint
 
     subroutine op_nnint(n1, n2, n3, n4)
@@ -1891,6 +2139,21 @@ contains
               vtl, vtr, npdim)
       end do
       
+      ! maxm = min(ubound(idx_nocc2b(2, n1, n2)%mp, 1), &
+      !      ubound(idx_nocc2b(2, n3, n4)%mp, 1))
+
+      ! do mm = -maxm, maxm
+      !    if (.not. allocated( op%nocc2b(2, n1, n2, n3, n4)%m(mm)%v )) cycle
+      !    call operate_partition_nnint( &
+      !         ptn%pn(1)%id(idlp)%mz(mmlp), &
+      !         ptn%pn(2)%id(idln)%mz(mmln), &
+      !         ptn%pn(1)%id(idrp)%mz(mmrp), &
+      !         ptn%pn(2)%id(idrn)%mz(mmrn), &
+      !         idx_nocc2b(2, n1, n2)%mp(mm)%idx, &
+      !         idx_nocc2b(2, n3, n4)%mp(mm)%idx, &
+      !         op%nocc2b(2, n1, n2, n3, n4)%m(mm)%v, &
+      !         vtl, vtr, npdim)
+      ! end do
     end subroutine op_nnint
 
     subroutine op_p_ob(n1, n2)
@@ -1906,7 +2169,7 @@ contains
            ptnr%pn(2)%id(idrn)%mz(mmrn), &
            idx_nocc2b(1, n1, n2)%md(md)%idx, &
            op%nocc1b(1, n1, n2)%m(md)%v, &
-           vtl, vtr)
+           vtl, vtr, npdim)
     end subroutine op_p_ob
     
     subroutine op_n_ob(n1, n2)
@@ -1922,7 +2185,7 @@ contains
            ptnr%pn(2)%id(idrn)%mz(mmrn), &
            idx_nocc2b(2, n1, n2)%md(md)%idx, &
            op%nocc1b(2, n1, n2)%m(md)%v, &
-           vtl, vtr)
+           vtl, vtr, npdim)
     end subroutine op_n_ob
     
 
@@ -1942,12 +2205,13 @@ contains
   end subroutine order_nn
 
 
-  subroutine particle_hole_orbit(nocl, nocr, nph, norb_ph)
+  subroutine particle_hole_orbit(nocl, nocr, nph, norb_ph, nhole)
     integer, intent(in) :: nocl(:), nocr(:)
     integer, intent(out) :: nph, norb_ph(4)
-    ! integer :: ndif(size(nocl)) ! slow declare in SPARC
+    integer, intent(out), optional :: nhole
     integer :: ndif(max_n_jorb)
     integer :: i, j, k, iup, idn, n
+
     n = size(nocl)
     do i = 1, n
        ndif(i) = nocl(i) - nocr(i)
@@ -1956,9 +2220,17 @@ contains
     do i = 1, n
        if (ndif(i) > 0) nph = nph + ndif(i)
     end do
-       
+
     if (nph > 2) return
 
+    if (present(nhole)) then
+       nhole = 0
+       do i = 1, n
+          if (ndif(i) < 0) nhole = nhole - ndif(i)
+       end do
+       if (nhole > 2) return
+    end if
+    
     iup = 0
     idn = 0 
     do i = 1, n
@@ -2138,7 +2410,7 @@ contains
   end subroutine operate_partition_n_onebody
 
   subroutine operate_partition_p_onebody_obtd( &
-       ptnlp, ptnln, ptnrp, ptnrn, idx, opv, lwf, rwf)
+       ptnlp, ptnln, ptnrp, ptnrn, idx, opv, lwf, rwf, npdim)
     !
     !  proton OBTD in selected partition
     !
@@ -2147,9 +2419,12 @@ contains
     integer, intent(in) :: idx(:,:)
     real(kwf), intent(in) :: lwf( ptnlp%n, ptnln%n )
     real(kwf), intent(in) :: rwf( ptnrp%n, ptnrn%n )
-    integer :: n, i, j, ij,  nr
+    integer, intent(in) :: npdim(4)
+    integer :: n, i, j, k, ij, nr, s
     integer(kmbit) :: mi, mb
-    do n = 1, ptnlp%n
+
+    ! do n = 1, ptnlp%n
+    do n = npdim(1), npdim(2)
        mi = ptnlp%mbit(n)
        do ij = 1, size(idx, 2)
           i = idx(1, ij)
@@ -2159,16 +2434,18 @@ contains
           if (btest(mb, j)) cycle
           mb = ibset(mb, j)
           call bin_srch_mbit(mb, ptnrp, nr, iwho=5)
-          ! lwf(n, :) = lwf(n, :) &
-          !   + nsign_order(mb, i, j) * opv(ij) * rwf(nr, :)
-          opv(ij) = opv(ij) + nsign_order(mb, i, j) &
-               * dot_product( lwf(n, :), rwf(nr, :) )
+          ! opv(ij) = opv(ij) + nsign_order(mb, i, j) &
+          !      * dot_product( lwf(n, :), rwf(nr, :) )
+          s = nsign_order(mb, i, j)
+          do k = npdim(3), npdim(4)
+             opv(ij) = opv(ij) + s * lwf(n, k) * rwf(nr, k)
+          end do
        end do
     end do
   end subroutine operate_partition_p_onebody_obtd
 
   subroutine operate_partition_n_onebody_obtd( &
-       ptnlp, ptnln, ptnrp, ptnrn, idx, opv, lwf, rwf)
+       ptnlp, ptnln, ptnrp, ptnrn, idx, opv, lwf, rwf, npdim)
     !
     ! operate genral neutron one-body operator in selected partition
     !
@@ -2177,9 +2454,12 @@ contains
     integer, intent(in) :: idx(:,:)
     real(kwf), intent(in) :: lwf( ptnlp%n, ptnln%n )
     real(kwf), intent(in) :: rwf( ptnrp%n, ptnrn%n )
-    integer :: n, i, j, ij,  nr
+    integer, intent(in) :: npdim(4)
+    integer :: n, i, j, ij, nr, k, s
     integer(kmbit) :: mi, mb
-    do n = 1, ptnln%n
+
+    ! do n = 1, ptnln%n
+    do n = npdim(3), npdim(4)
        mi = ptnln%mbit(n)
        do ij = 1, size(idx, 2)
           i = idx(1, ij)
@@ -2189,10 +2469,12 @@ contains
           if (btest(mb, j)) cycle
           mb = ibset(mb, j)
           call bin_srch_mbit(mb, ptnrn, nr, iwho=6)
-          ! lwf(:, n) = lwf(:, n) &
-          !      + nsign_order(mb, i, j) * opv(ij) * rwf(:, nr)
-          opv(ij) = opv(ij) + nsign_order(mb, i, j) &
-               * dot_product(lwf(:, n),  rwf(:, nr))
+          !opv(ij) = opv(ij) + nsign_order(mb, i, j) &
+          !     * dot_product(lwf(:, n),  rwf(:, nr))
+          s = nsign_order(mb, i, j)
+          do k = npdim(1), npdim(2)
+             opv(ij) = opv(ij) +  s * lwf(k, n) * rwf(k, nr)
+          end do
        end do
     end do
   end subroutine operate_partition_n_onebody_obtd
@@ -2474,6 +2756,7 @@ contains
     integer(kmbit) :: mb, mi, mj
     real(8) :: x
 
+!    do i = 1, ptnlp%n
     do i = npdim(1), npdim(2)
        mi = ptnlp%mbit(i)
        do ijo = 1, size(idx1, 2)
@@ -2492,7 +2775,11 @@ contains
              mb = ibset(mj, ko)
              mb = ibset(mb, lo)
              call bin_srch_mbit(mb, ptnrp, j, iwho=3)
-
+             
+             ! x = sij * nsign(mb, ko, lo) * opv(ijo,klo) 
+             ! do in = npdim(3), npdim(4)
+             !    lwf(i, in) = lwf(i, in) + x * rwf(j, in)
+             ! end do
              x = sij * nsign(mb, ko, lo)
              do in = npdim(3), npdim(4)
                 opv(ijo, klo) = opv(ijo, klo) + x * lwf(i, in) * rwf(j, in)
@@ -2520,6 +2807,7 @@ contains
     integer(kmbit) :: mb, mi, mj
     real(8) :: x
 
+!    do i = 1, ptnln%n
     do i = npdim(3), npdim(4)
        mi = ptnln%mbit(i)
        do ijo = 1, size(idx1, 2)
@@ -2538,7 +2826,10 @@ contains
              mb = ibset(mj, ko)
              mb = ibset(mb, lo)
              call bin_srch_mbit(mb, ptnrn, j, iwho=4)
-
+!             x = sij * nsign(mb, ko, lo) *  opv(ijo,klo)
+!             do ip = npdim(1), npdim(2)
+!                lwf(ip, i) = lwf(ip, i) + x * rwf(ip, j)
+!             end do
              x = sij * nsign(mb, ko, lo)
              do ip = npdim(1), npdim(2)
                 opv(ijo,klo) = opv(ijo,klo) + x * lwf(ip,i) * rwf(ip,j)
@@ -2745,7 +3036,9 @@ contains
     low = 1
     high = ptnm%n
 
+!    do while (low <= high) 
     do i = 1, 64
+!       mid = low + ( (high-low)/2 ) ! avoid overflow
        mid = (low+high)/2 
        mt = ptnm%mbit(mid)
        if (mb < mt) then
@@ -2806,7 +3099,7 @@ contains
        ipn = 1
        n1 = norb_ph_p(1)
        n2 = norb_ph_n(3)
-    else 
+    else ! op%nbody == -11 : neutron create proton dest.
        if (ph_p /= 0 .or. ph_n /= 1) return
        ipn = 2
        n1 = norb_ph_n(1)
@@ -2938,6 +3231,100 @@ contains
        end do
     end if
   end subroutine operate_partition_one_crt
+
+
+
+  subroutine wf_operate_one_anh(ptnl, ptnr, op, idl, idr, vl, vr)
+    type(type_ptn_pn), intent(in) :: ptnl, ptnr
+    type(opr_m), intent(in) :: op
+    integer, intent(in) :: idl, idr  ! partition ID
+    real(kwf), intent(inout), target :: vl(:)
+    real(kwf), intent(in), target :: vr(:)
+    integer :: idlp, idln, idrp, idrn, mmlp, mmln, mmrp, mmrn, md
+    integer :: ph_n, ph_p, norb_ph_p(4), norb_ph_n(4)
+    integer :: n1, n2, n3, n4, ni, nj, n, ipn, md_n
+    real(kwf), pointer :: vtl(:), vtr(:)
+    integer :: nhl_p, nhl_n
+
+    idlp = ptnl%pidpnM_pid(1,idl)
+    idln = ptnl%pidpnM_pid(2,idl)
+    mmlp = ptnl%pidpnM_pid(3,idl)
+    mmln = ptnl%mtotal - mmlp
+    idrp = ptnr%pidpnM_pid(1,idr)
+    idrn = ptnr%pidpnM_pid(2,idr)
+    mmrp = ptnr%pidpnM_pid(3,idr)
+    mmrn = ptnr%mtotal - mmrp
+
+    md = (ptnl%mtotal - ptnr%mtotal) / 2
+    vtl => vl(ptnl%local_dim_acc_start(idl) : ptnl%local_dim_acc(idl))
+    vtr => vr(ptnr%local_dim_acc_start(idr) : ptnr%local_dim_acc(idr))
+
+    call particle_hole_orbit( ptnl%pn(1)%nocc(:,idlp), &
+         ptnr%pn(1)%nocc(:,idrp), ph_p, norb_ph_p, nhole=nhl_p )
+    call particle_hole_orbit( ptnl%pn(2)%nocc(:,idln), &
+         ptnr%pn(2)%nocc(:,idrn), ph_n, norb_ph_n, nhole=nhl_n )
+
+    if (op%nbody == -6) then
+       if (mmln /= mmrn .or. nhl_n /= 0) return
+       ipn = 1
+       n1 = norb_ph_p(3) 
+    elseif (op%nbody == -7) then
+       if (mmlp /= mmrp .or. nhl_p /= 0) return
+       ipn = 2
+       n1 = norb_ph_n(3)
+    end if
+    if (n1 /= op%crt_orb) return
+
+    call operate_partition_one_anh( &
+         ptnl%pn(1)%id(idlp)%mz(mmlp), &
+         ptnl%pn(2)%id(idln)%mz(mmln), &
+         ptnr%pn(1)%id(idrp)%mz(mmrp), &
+         ptnr%pn(2)%id(idrn)%mz(mmrn), &
+         op%crt_idx, &
+         op%crt_v, &
+         vtl, vtr, ipn)
+  end subroutine wf_operate_one_anh
+
+
+  subroutine operate_partition_one_anh( &
+       ptnlp, ptnln, ptnrp, ptnrn, idx, opv, lwf, rwf, ipn)
+    !
+    ! proton-create neutron-destruction operator
+    !
+    type(type_mbit), intent(in) :: ptnlp, ptnln, ptnrp, ptnrn
+    real(8), intent(in) :: opv
+    integer, intent(in) :: idx, ipn
+    real(kwf), intent(inout) :: lwf( ptnlp%n, ptnln%n )
+    real(kwf), intent(in) :: rwf( ptnrp%n, ptnrn%n )
+    integer :: ni, nj, ri, rj
+    integer(kmbit) :: mpi, mpb, mni, mnb
+
+    if (ipn == 1) then ! proton annihilation
+       do ni = 1, ptnlp%n
+          mpi = ptnlp%mbit(ni)
+          if (btest(mpi, idx)) cycle
+          mpb = ibset(mpi, idx)
+          call bin_srch_mbit(mpb, ptnrp, ri, iwho=13)
+          do nj = 1, ptnln%n
+             lwf(ni, nj) = lwf(ni, nj) + nsign_order(mpb, 0, idx) &
+                  * opv * rwf(ri, nj)
+          end do
+       end do
+    else !  neutron annihilation
+       do nj = 1, ptnln%n
+          mni = ptnln%mbit(nj)
+          if (btest(mni, idx)) cycle
+          mnb = ibset(mni, idx)
+          call bin_srch_mbit(mnb, ptnrn, rj, iwho=15)
+          do ni = 1, ptnlp%n
+             lwf(ni, nj) = lwf(ni, nj) + nsign_order(mnb, 0, idx) &
+                  * opv * rwf(ni, rj)
+          end do
+       end do
+    end if
+  end subroutine operate_partition_one_anh
+
+  
 
 
   subroutine wf_operate_two_crt(ptnl, ptnr, op, idl, idr, vl, vr)
@@ -3225,7 +3612,7 @@ contains
 
   subroutine wf_operate_tb_beta(ptnl, ptnr, op, idl, idr, vl, vr)
     type(type_ptn_pn), intent(in) :: ptnl, ptnr
-    type(opr_m), intent(in) :: op
+    type(opr_m), intent(inout) :: op
     integer, intent(in) :: idl, idr  ! partition ID
     real(kwf), intent(inout), target :: vl(:)
     real(kwf), intent(in), target :: vr(:)
@@ -3270,25 +3657,38 @@ contains
     if (.not. allocated( op%nocc2b(1, n1, n2, n3, n4)%m )) return
     if (.not. allocated( op%nocc2b(1, n1, n2, n3, n4)%m(mdp)%v )) return
 
-    call operate_partition_ppnnint( &
-         ptnl%pn(1)%id(idlp)%mz(mmlp), &
-         ptnl%pn(2)%id(idln)%mz(mmln), &
-         ptnr%pn(1)%id(idrp)%mz(mmrp), &
-         ptnr%pn(2)%id(idrn)%mz(mmrn), &
-         idx_nocc2b(1, n1, n2)%mp(mdp)%idx, &
-         idx_nocc2b(2, n3, n4)%mp(mdp)%idx, &
-         op%nocc2b(1, n1, n2, n3, n4)%m(mdp)%v, &
-         vtl, vtr)
+    if (op%nbody==-12 .or. op%nbody==-13) then
+       call operate_partition_ppnnint( &
+            ptnl%pn(1)%id(idlp)%mz(mmlp), &
+            ptnl%pn(2)%id(idln)%mz(mmln), &
+            ptnr%pn(1)%id(idrp)%mz(mmrp), &
+            ptnr%pn(2)%id(idrn)%mz(mmrn), &
+            idx_nocc2b(1, n1, n2)%mp(mdp)%idx, &
+            idx_nocc2b(2, n3, n4)%mp(mdp)%idx, &
+            !         idx_nocc2b(2, n3, n4)%mp(-mdn)%idx, &
+            op%nocc2b(1, n1, n2, n3, n4)%m(mdp)%v, &
+            vtl, vtr)
+    elseif (op%nbody == 13) then
+       call operate_partition_ppnnint_tbtd( &
+            ptnl%pn(1)%id(idlp)%mz(mmlp), &
+            ptnl%pn(2)%id(idln)%mz(mmln), &
+            ptnr%pn(1)%id(idrp)%mz(mmrp), &
+            ptnr%pn(2)%id(idrn)%mz(mmrn), &
+            idx_nocc2b(1, n1, n2)%mp(mdp)%idx, &
+            idx_nocc2b(2, n3, n4)%mp(mdp)%idx, &
+            op%nocc2b(1, n1, n2, n3, n4)%m(mdp)%v, &
+            vtl, vtr)
+    end if
     
   end subroutine wf_operate_tb_beta
 
   subroutine operate_partition_ppnnint( &
        ptnlp, ptnln, ptnrp, ptnrn, idx1, idx2, opv, lwf, rwf)
     !
-    ! operate cp cp dn dnd two-body double-beta operator at a partition
+    ! operate cp cp dn dn two-body double-beta operator at a partition
     !
     type(type_mbit), intent(in) :: ptnlp, ptnln, ptnrp, ptnrn
-    real(8), intent(in), target :: opv(:,:)
+    real(8), intent(inout), target :: opv(:,:)
     integer, intent(in) :: idx1(:,:), idx2(:,:)
     real(kwf), intent(inout) :: lwf( ptnlp%n, ptnln%n )
     real(kwf), intent(in) :: rwf( ptnrp%n, ptnrn%n )
@@ -3341,6 +3741,65 @@ contains
 
 
 
+  subroutine operate_partition_ppnnint_tbtd( &
+       ptnlp, ptnln, ptnrp, ptnrn, idx1, idx2, opv, lwf, rwf)
+    !
+    ! cp cp dn dn TBTD for double-beta operator at a partition
+    !
+    type(type_mbit), intent(in) :: ptnlp, ptnln, ptnrp, ptnrn
+    real(8), intent(inout), target :: opv(:,:)
+    integer, intent(in) :: idx1(:,:), idx2(:,:)
+    real(kwf), intent(inout) :: lwf( ptnlp%n, ptnln%n )
+    real(kwf), intent(in) :: rwf( ptnrp%n, ptnrn%n )
+    integer(kmbit) :: mb
+    integer :: i, j, k, n, io, jo, ijo, s
+    integer, parameter :: max_jump_nn=2000
+    integer :: ijs(4, max_jump_nn)
+    
+    n = 0
+    do i = 1, ptnlp%n
+       do ijo = 1, size(idx1, 2)
+          mb = ptnlp%mbit(i)
+          io = idx1(1, ijo)
+          jo = idx1(2, ijo)
+          if (.not. btest(mb, io)) cycle
+          if (.not. btest(mb, jo)) cycle
+          mb = ibclr(mb, io)
+          mb = ibclr(mb, jo)
+          s = nsign(mb, io, jo)
+          call bin_srch_mbit(mb, ptnrp, j, iwho=20)
+          n = n + 1
+          if (n > max_jump_nn) stop 'increase max_jump_nn'
+          ijs(1, n) = i
+          ijs(2, n) = j
+          ijs(3, n) = s
+          ijs(4, n) = ijo
+       end do
+    end do
+
+    do i = 1, ptnln%n
+       do ijo = 1, size(idx2, 2)
+          mb = ptnln%mbit(i)
+          io = idx2(1, ijo)
+          jo = idx2(2, ijo)
+          if (btest(mb, io)) cycle
+          if (btest(mb, jo)) cycle
+          mb = ibset(mb, io)
+          mb = ibset(mb, jo)
+          s = nsign(mb, io, jo)
+          call bin_srch_mbit(mb, ptnrn, j, iwho=21)
+          do k = 1, n
+             opv(ijs(4,k),ijo) = opv(ijs(4,k),ijo) &
+                  + s * ijs(3,k) &
+                  * lwf(ijs(1,k), i) * rwf(ijs(2,k), j)
+          end do
+       end do
+    end do
+
+  end subroutine operate_partition_ppnnint_tbtd
+
+
+
   subroutine pnint_onebody_jump(npdim, idx, ptnlp, ptnrp, njump, p_ik)
     ! one-body jump index of proton-neutron int.
     integer, intent(in) :: npdim(2), idx(:,:)
@@ -3360,13 +3819,163 @@ contains
           mi = ibset(mi, k)
           s = nsign_order_12(mi, i, k)
           njump(s) = njump(s) + 1
-          if (njump(s) > max_npsize) stop 'increase max_npsize'
+          if (njump(s) > max_npsize) cycle
+          ! if (njump(s) > max_npsize) stop 'increase max_npsize'
           p_ik(1, njump(s), s) = ik
           p_ik(2, njump(s), s) = n
           call bin_srch_mbit(mi, ptnrp, p_ik(3, njump(s), s), iwho=1)
        end do
     end do
+
+    if (maxval(njump) > max_npsize) then 
+       write(*,'(a,i3,2i10)') 'ERROR: increase max_npsize to ', myrank, maxval(njump), max_npsize
+       stop 'increase max_npsize'
+    end if
   end subroutine pnint_onebody_jump
+
+
+
+
+  
+  subroutine wf_operate_pppn_tbtd(ptnl, ptnr, op, idl, idr, vl, vr)
+    type(type_ptn_pn), intent(in) :: ptnl, ptnr
+    type(opr_m), intent(inout) :: op
+    integer, intent(in) :: idl, idr  ! partition ID
+    real(kwf), intent(inout), target :: vl(:)
+    real(kwf), intent(in), target :: vr(:)
+    integer :: idlp, idln, idrp, idrn, mmlp, mmln, mmrp, mmrn, md, md_n
+    integer :: ph_n, ph_p, norb_ph_p(4), norb_ph_n(4)
+    integer :: n1, n2, n3, n4, ni, nj, nk, n, i, mdp, mdn
+    real(kwf), pointer :: vtl(:), vtr(:)
+
+    idlp = ptnl%pidpnM_pid(1,idl)
+    idln = ptnl%pidpnM_pid(2,idl)
+    mmlp = ptnl%pidpnM_pid(3,idl)
+    mmln = ptnl%mtotal - mmlp
+    idrp = ptnr%pidpnM_pid(1,idr)
+    idrn = ptnr%pidpnM_pid(2,idr)
+    mmrp = ptnr%pidpnM_pid(3,idr)
+    mmrn = ptnr%mtotal - mmrp
+
+    md  = ptnl%mtotal - ptnr%mtotal
+    mdp = mmlp - mmrp
+    mdn = mmln - mmrn
+    vtl => vl(ptnl%local_dim_acc_start(idl) : ptnl%local_dim_acc(idl))
+    vtr => vr(ptnr%local_dim_acc_start(idr) : ptnr%local_dim_acc(idr))
+
+    call particle_hole_orbit( ptnl%pn(1)%nocc(:,idlp), &
+         ptnr%pn(1)%nocc(:,idrp), ph_p, norb_ph_p )
+    call particle_hole_orbit( ptnl%pn(2)%nocc(:,idln), &
+         ptnr%pn(2)%nocc(:,idrn), ph_n, norb_ph_n )
+
+    if (op%nbody /= 11) stop "error "
+
+    if (     ph_p == 2 .and. ph_n == 0)  then
+       n1 = norb_ph_p(1)
+       n2 = norb_ph_p(2)
+       n3 = norb_ph_p(3)
+       n4 = norb_ph_n(3)
+
+       if ( ( mdp <= ubound(idx_pph(1, n1, n2, n3)%md, 1)) .and. &
+            ( mdp >= lbound(idx_pph(1, n1, n2, n3)%md, 1)) .and. &
+            (-mdn <= ubound(idx_p(2, n4)%md, 1)) .and. &
+            (-mdn >= lbound(idx_p(2, n4)%md, 1)) ) &
+            call operate_partition_pppn( &
+            ptnl%pn(1)%id(idlp)%mz(mmlp), &
+            ptnl%pn(2)%id(idln)%mz(mmln), &
+            ptnr%pn(1)%id(idrp)%mz(mmrp), &
+            ptnr%pn(2)%id(idrn)%mz(mmrn), &
+            idx_pph(1, n1, n2, n3)%md(mdp)%idx, &
+            idx_p(2, n4)%md(-mdn)%idx, &
+            op%nocc2b(1, n1, n2, n3, n4)%m(mdp)%v, &
+            vtl, vtr)
+
+    else if (ph_p == 1 .and. ph_n == 1) then 
+       n1 = norb_ph_p(1)
+       n2 = norb_ph_n(1)
+       n3 = norb_ph_n(3)
+       n4 = norb_ph_n(4)
+
+       if ( ( mdp <= ubound(idx_p(1, n1)%md, 1)) .and. &
+            ( mdp >= lbound(idx_p(1, n1)%md, 1)) .and. &
+            (-mdn <= ubound(idx_pph(2, n3, n4, n2)%md, 1)) .and. &
+            (-mdn >= lbound(idx_pph(2, n3, n4, n2)%md, 1)) ) &
+            call operate_partition_pnnn( &
+            ptnl%pn(1)%id(idlp)%mz(mmlp), &
+            ptnl%pn(2)%id(idln)%mz(mmln), &
+            ptnr%pn(1)%id(idrp)%mz(mmrp), &
+            ptnr%pn(2)%id(idrn)%mz(mmrn), &
+            idx_p(1, n1)%md(mdp)%idx, &
+            idx_pph(2, n3, n4, n2)%md(-mdn)%idx, &
+            op%nocc2b(2, n1, n2, n3, n4)%m(mdp)%v, &
+            vtl, vtr)
+
+    else if (ph_p == 1  .and. ph_n == 0) then
+       ni = norb_ph_p(1)
+       nj = norb_ph_n(3)
+
+       if ( ( mdp <= ubound(idx_p(1, ni)%md, 1)) .and. &
+            ( mdp >= lbound(idx_p(1, ni)%md, 1)) .and. &
+            (-mdn <= ubound(idx_p(2, nj)%md, 1)) .and. &
+            (-mdn >= lbound(idx_p(2, nj)%md, 1)) ) &
+            call operate_partition_ph_pn( &
+            ptnl%pn(1)%id(idlp)%mz(mmlp), &
+            ptnl%pn(2)%id(idln)%mz(mmln), &
+            ptnr%pn(1)%id(idrp)%mz(mmrp), &
+            ptnr%pn(2)%id(idrn)%mz(mmrn), &
+            idx_p(1, ni)%md( mdp)%idx, &
+            idx_p(2, nj)%md(-mdn)%idx, &
+            op%nocc1b(1, ni, nj)%m(mdp)%v, &
+            vtl, vtr)
+
+       do nk = 1, n_jorb(1)  ! pppn
+          if ( ptnr%pn(1)%nocc(nk,idrp) == 0) cycle
+          n1 = min( ni, nk )
+          n2 = max( ni, nk )
+          n3 = nk
+          n4 = nj
+
+          if ( ( mdp <= ubound(idx_pph(1, n1, n2, n3)%md, 1)) .and. &
+               ( mdp >= lbound(idx_pph(1, n1, n2, n3)%md, 1)) .and. &
+               (-mdn <= ubound(idx_p(2, n4)%md, 1)) .and. &
+               (-mdn >= lbound(idx_p(2, n4)%md, 1)) ) &
+               call operate_partition_pppn( &
+               ptnl%pn(1)%id(idlp)%mz(mmlp), &
+               ptnl%pn(2)%id(idln)%mz(mmln), &
+               ptnr%pn(1)%id(idrp)%mz(mmrp), &
+               ptnr%pn(2)%id(idrn)%mz(mmrn), &
+               idx_pph(1, n1, n2, n3)%md(mdp)%idx, &
+               idx_p(2, n4)%md(-mdn)%idx, &
+               op%nocc2b(1, n1, n2, n3, n4)%m(mdp)%v, &
+               vtl, vtr)
+       end do
+
+       do nk = 1, n_jorb(2) ! pnnn
+          if ( ptnr%pn(2)%nocc(nk,idrn) == 0 ) cycle
+          n1 = ni
+          n2 = nk
+          n3 = min( nj, nk )
+          n4 = max( nj, nk )
+          if ( nj==nk .and. ptnr%pn(2)%nocc(nk,idrn) == 1) cycle
+
+          if ( ( mdp <= ubound(idx_p(1, n1)%md, 1)) .and. &
+               ( mdp >= lbound(idx_p(1, n1)%md, 1)) .and. &
+               (-mdn <= ubound(idx_pph(2, n3, n4, n2)%md, 1)) .and. &
+               (-mdn >= lbound(idx_pph(2, n3, n4, n2)%md, 1)) ) &
+               call operate_partition_pnnn( &
+               ptnl%pn(1)%id(idlp)%mz(mmlp), &
+               ptnl%pn(2)%id(idln)%mz(mmln), &
+               ptnr%pn(1)%id(idrp)%mz(mmrp), &
+               ptnr%pn(2)%id(idrn)%mz(mmrn), &
+               idx_p(1, n1)%md(mdp)%idx, &
+               idx_pph(2, n3, n4, n2)%md(-mdn)%idx, &
+               op%nocc2b(2, n1, n2, n3, n4)%m(mdp)%v, &
+               vtl, vtr)
+       end do
+
+    end if
+
+  end subroutine wf_operate_pppn_tbtd
 
 
   subroutine operate_partition_ph_pn( &
@@ -3420,6 +4029,134 @@ contains
     end do
 
   end subroutine operate_partition_ph_pn
+
+
+
+  subroutine operate_partition_pppn( &
+       ptnlp, ptnln, ptnrp, ptnrn, idx1, idx2, opv, lwf, rwf)
+    !
+    ! operate cp+ cp+ cp dn TBTD for each partition
+    !
+    type(type_mbit), intent(in) :: ptnlp, ptnln, ptnrp, ptnrn
+    real(8), intent(inout) :: opv(:,:)
+    integer, intent(in) :: idx1(:,:), idx2(:,:)
+    real(kwf), intent(inout) :: lwf( ptnlp%n, ptnln%n )
+    real(kwf), intent(in) :: rwf( ptnrp%n, ptnrn%n )
+    integer(kmbit) :: mb
+    integer :: i, j, k, n, io, jo, ko, ijo, s
+    integer, parameter :: max_jump_nn=2000
+    integer :: ijs(4, max_jump_nn)
+    
+    n = 0
+    do i = 1, ptnlp%n
+       do ijo = 1, size(idx1, 2)
+          mb = ptnlp%mbit(i)
+          io = idx1(1, ijo)
+          jo = idx1(2, ijo)
+          ko = idx1(3, ijo)
+          if (.not. btest(mb, io)) cycle
+          if (.not. btest(mb, jo)) cycle
+          mb = ibclr(mb, io)
+          mb = ibclr(mb, jo)
+          s = nsign(mb, io, jo)
+          if (btest(mb, ko)) cycle
+          mb = ibset(mb, ko)
+          s = s * nsign(mb, 0, ko) * (-1) ! -1 : exchange of ko and lo
+          call bin_srch_mbit(mb, ptnrp, j, iwho=24)
+          n = n + 1
+          if (n > max_jump_nn) stop 'increase max_jump_nn'
+          ijs(1, n) = i
+          ijs(2, n) = j
+          ijs(3, n) = s
+          ijs(4, n) = ijo
+       end do
+    end do
+
+    do i = 1, ptnln%n
+       do ijo = 1, size(idx2, 2)
+          mb = ptnln%mbit(i)
+          io = idx2(1, ijo)
+          if (btest(mb, io)) cycle
+          mb = ibset(mb, io)
+          s = nsign(mb, 0, io)
+          call bin_srch_mbit(mb, ptnrn, j, iwho=25)
+          do k = 1, n
+             opv(ijs(4,k), ijo) = opv(ijs(4,k),ijo) &
+                  + s * ijs(3,k) * lwf(ijs(1,k), i)  &
+                  * rwf(ijs(2,k), j)
+          end do
+       end do
+    end do
+
+  end subroutine operate_partition_pppn
+
+
+
+  subroutine operate_partition_pnnn( &
+       ptnlp, ptnln, ptnrp, ptnrn, idx1, idx2, opv, lwf, rwf)
+    !
+    ! operate cp+ cn+ cn cn TBTD for each partition
+    !
+    type(type_mbit), intent(in) :: ptnlp, ptnln, ptnrp, ptnrn
+    real(8), intent(inout) :: opv(:,:)
+    integer, intent(in) :: idx1(:,:), idx2(:,:)
+    real(kwf), intent(in) :: lwf( ptnlp%n, ptnln%n )
+    real(kwf), intent(in) :: rwf( ptnrp%n, ptnrn%n )
+    integer(kmbit) :: mb
+    integer :: i, j, k, n, io, jo, ko, ijo, s
+    integer, parameter :: max_jump_nn=2000
+    integer :: ijs(4, max_jump_nn)
+
+    
+    n = 0
+    do i = 1, ptnlp%n
+       do ijo = 1, size(idx1, 2)
+          mb = ptnlp%mbit(i)
+          io = idx1(1, ijo)
+          if (.not. btest(mb, io)) cycle
+          mb = ibclr(mb, io)
+          s = nsign(mb, 0, io)
+          call bin_srch_mbit(mb, ptnrp, j, iwho=26)
+
+          n = n + 1
+          if (n > max_jump_nn) stop 'increase max_jump_nn'
+          ijs(1, n) = i
+          ijs(2, n) = j
+          ijs(3, n) = s
+          ijs(4, n) = ijo
+       end do
+    end do
+
+    do i = 1, ptnln%n
+       do ijo = 1, size(idx2, 2)
+          mb = ptnln%mbit(i)
+          io = idx2(1, ijo)
+          jo = idx2(2, ijo)
+          ko = idx2(3, ijo)
+
+          if (.not. btest(mb, ko)) cycle
+          mb = ibclr(mb, ko)
+          s = nsign(mb, 0, ko)
+          
+          if (btest(mb, io)) cycle
+          if (btest(mb, jo)) cycle
+          mb = ibset(mb, io)
+          mb = ibset(mb, jo)
+          s = s * nsign(mb, io, jo)
+          call bin_srch_mbit(mb, ptnrn, j, iwho=27)
+
+          do k = 1, n
+             opv(ijs(4,k), ijo) = opv(ijs(4,k), ijo) &
+                  + s * ijs(3,k) * lwf(ijs(1,k), i)  &
+                  * rwf(ijs(2,k), j)
+          end do
+
+       end do
+    end do
+
+  end subroutine operate_partition_pnnn
+
+
 
   subroutine dealloc_shift_block()
     ! deallocate working vector block

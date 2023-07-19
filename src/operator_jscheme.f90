@@ -101,7 +101,7 @@ contains
     ipr1_type = 1  ! positive parity
     call init_opj(irank, nbody, ipr1_type, oj) ! allocate 
 
-! one-body
+    ! one-body
     call read_firstline_1b(num1, dep_mass1, method1) ! determine mass dependence 
     do i = 1, num1
        read(lunint,*) k1, k2, v
@@ -125,7 +125,7 @@ contains
        oj%p1%v(k2,k1) = v * dep_mass1 * factor
     end do
 
-! two-body
+    ! two-body
     call read_firstline_2b(num2, dep_mass2, method2) ! fix mass dependence
     do i = 1, num2
        if (method2==10) then
@@ -320,6 +320,7 @@ contains
     !          10   one-body transition density (init_obtd_beta, container)
     !          11   two-body transition density for cp+ cn type
     !          12   two-body transition density for cn+ cp type
+    !          13   two-body transition density for cp+ cp+ cn cn (init_tbtd_ppnn)
     !          -1   cp+     for s-factor
     !          -2   cn+     for s-factor
     !          -3   cp+ cp+ for 2p s-factor 
@@ -353,14 +354,16 @@ contains
        return
     end if
     call init_opj(iirank, inbody, iipr1_type, oj) ! allocate 
-! one-body
+
+    ! one-body
     do k1 = 1, n_jorb_pn
        do k2 = 1, n_jorb_pn
           oj%p1%v(k1,k2) = func_1(norb(k1), lorb(k1), jorb(k1), itorb(k1), &
                & norb(k2), lorb(k2), jorb(k2), itorb(k2))
        end do
     end do
-! two-body
+
+    ! two-body
     if (.not. present(func_2)) return
     do jj = 0, jcouplemax
        do ipn = 1, 3

@@ -15,8 +15,7 @@ module bp_expc_val
   use bridge_partitions
   implicit none
 
-  public :: bp_ex_vals, bp_ex_vals_pn, bp_ex_vals_ij
-  public :: bp_ex_val_tbtd
+  public :: bp_ex_vals, bp_ex_vals_pn, bp_ex_vals_ij, bp_ex_val_tbtd
 
 contains
 
@@ -36,21 +35,26 @@ contains
     integer :: i, ml, idl, mr, myrank_right, iop, idr
     integer :: ntask, nntask, itask, npdim(4)
     integer :: iv_shift, jv_shift
-
+    logical :: is_vt
 
     do i = 1, size(ops)
        if (.not. allocated(ops(i)%mlmr)) &
             stop "ERROR: call init_bp_operator in bp_ex_vals"
        if (ops(i)%nbody /= 2) stop "ERROR not implement bp_ex_vals"
     end do
+    
+    nullify( vt%p )
+    is_vt = .false.
     if (present(vr)) then
-       vt%p => vr%p
-    else
-       call wf_alloc_vec(vt, self%ptnr)
-       vt%p = vl%p
+       if (.not. associated(vl%p, vr%p) ) vt%p => vr%p
     end if
-    ev = 0.d0
+    if ( .not. associated(vt%p) ) then
+       call wf_alloc_vec(vt, self%ptnr)
+       vt%p(:) = vl%p(:)
+       is_vt = .true.
+    end if
 
+    ev = 0.d0
 
     nntask = 0
     do ml = 0, nprocs_reduce - 1
@@ -101,7 +105,7 @@ contains
     call mpi_allreduce(evt, ev, size(ev), mpi_real8, &
          mpi_sum, mpi_comm_world, ierr)
 #endif 
-    if (.not. present(vr)) call deallocate_l_vec (vt%p)
+    if (is_vt) call deallocate_l_vec( vt%p )
   end subroutine bp_ex_vals
 
 
@@ -320,6 +324,8 @@ contains
     nt = 1
     !$ nt = omp_get_thread_num() + 1
 
+    ! call pnint_onebody_jump((/ 1, ptnlp%n /), idx1, ptnlp, ptnrp, n_dimp, p_ik(:,:,:,nt))
+    ! call pnint_onebody_jump((/ 1, ptnln%n /), idx2, ptnln, ptnrn, n_dimn, n_jl(:,:,:,nt))
     call pnint_onebody_jump( npdim(1:2), &
          idx1, ptnlp, ptnrp, n_dimp, p_ik(:,:,:,nt) )
     call pnint_onebody_jump( npdim(3:4), &
@@ -374,6 +380,7 @@ contains
     integer(kmbit) :: mb, mi, mj
     real(8) :: x
 
+!    do i = 1, ptnlp%n
     do i = npdim(1), npdim(2)
        mi = ptnlp%mbit(i)
        do ijo = 1, size(idx1, 2)
@@ -421,6 +428,7 @@ contains
     integer(kmbit) :: mb, mi, mj
     real(8) :: x
 
+    ! do i = 1, ptnln%n
     do i = npdim(3), npdim(4)
        mi = ptnln%mbit(i)
        do ijo = 1, size(idx1, 2)
@@ -440,6 +448,7 @@ contains
              mb = ibset(mb, lo)
              call bin_srch_mbit(mb, ptnrn, j, iwho=24)
              x = sij * nsign(mb, ko, lo) *  opv(ijo,klo)
+             ! do ip = 1, ptnlp%n
              do ip = npdim(1), npdim(2)
                 ev = ev + lwf(ip, i) * x * rwf(ip, j)
              end do
@@ -485,6 +494,7 @@ contains
     !           = <vl | op(i)_pn | vr>  if present(vr)
     !
     type(type_bridge_partitions), intent(inout) :: self
+!    type(type_vec_p), intent(in) :: vl
     type(type_vec_p), intent(inout) :: vl
     type(opr_m_p), intent(in) :: ops(:)
     real(8), intent(out) :: ev(2, size(ops))
@@ -526,16 +536,21 @@ contains
     real(8) :: ev_pt(n_jorb(1), n_jorb(1), size(ops)), &
          ev_nt(n_jorb(2), n_jorb(2), size(ops))
     integer :: iv_shift, jv_shift
+    logical :: is_vt
 
     do i = 1, size(ops)
        if (.not. allocated(ops(i)%p%mlmr)) &
             stop "Error: call init_bp_operator"
     end do
+    is_vt = .false.
+    nullify( vt%p )
     if (present(vr)) then
-       vt%p => vr%p
-    else
+       if (.not. associated(vl%p, vr%p) ) vt%p => vr%p
+    end if
+    if ( .not. associated(vt%p) ) then
        call wf_alloc_vec(vt, self%ptnr)
-       vt%p = vl%p
+       vt%p(:) = vl%p(:)
+       is_vt = .true.
     end if
     
     ev_p = 0.d0
@@ -582,7 +597,7 @@ contains
     ev_n = ev_nt
 #endif 
 
-    if (.not. present(vr)) call deallocate_l_vec (vt%p)
+    if (is_vt) call deallocate_l_vec( vt%p )
   end subroutine bp_ex_vals_ij
 
 
@@ -707,6 +722,7 @@ contains
     real(kwf) :: u(:), v(:)
     integer :: i 
     real(8) :: r
+!    if (size(u) /= size(v)) stop "error dot_product48"
     r = 0.d0
     do i = 1, size(u)
        r = r + u(i) * v(i)
@@ -717,10 +733,10 @@ contains
   !--------------------------
   
   subroutine bp_ex_val_tbtd(self, vl, vr, op)
-    use operator_mscheme, only : init_tbtd_op, clear_tbtd_op, finalize_opr_m    
+    use operator_mscheme, only : init_copy_opr_m, clear_op, add_opr_m, finalize_opr_m, print_tbtd_op
     !
     ! expectation values for TBTD, output : op
-    !  op = <vl| c+i c+j cl ck | vr> 
+    !  op = <vl| c+i c+j cl ck | vr>  in M-scheme 
     !
     type(type_bridge_partitions), intent(inout) :: self
     type(type_vec_p), intent(in) :: vl
@@ -733,16 +749,20 @@ contains
     integer :: n1, n2, n3, n4, nj, ipn, n, mm, ns, loop, nt, it, nn
     real(8), allocatable :: vi(:), vo(:)
     type(opr_m), allocatable :: ops(:)
-
-    if (op%nbody /= 5) stop "ERROR bp_ex_val_tbtd"
-
-    call start_stopwatch(time_tbtd)
+    integer, parameter :: maxns = 1000000
+    logical :: is_vt
     
+    call start_stopwatch(time_tbtd)
+
+    is_vt = .false.
+    nullify( vt%p )
     if (present(vr)) then
-       vt%p => vr%p
-    else
+       if (.not. associated(vl%p, vr%p) ) vt%p => vr%p
+    end if
+    if ( .not. associated(vt%p) ) then
        call wf_alloc_vec(vt, self%ptnr)
-       vt%p = vl%p
+       vt%p(:) = vl%p(:)
+       is_vt = .true.
     end if
 
     nntask = 0
@@ -755,113 +775,128 @@ contains
     allocate( ops(nt) )
     !$omp parallel do 
     do it = 1, nt
-       call init_tbtd_op( ops(it), op%mm*2, op%ipr1_type )
+       call init_copy_opr_m( op, ops(it) )
     end do
-    
     
     call shift_mpi_init(vl, vt, .false., is_bcast=.true.)
     it = 1
     
     do iv_shift = 0, nprocs_shift-1, nv_shift
        jv_shift = min(iv_shift+nv_shift, nprocs_shift) - 1
-       !$omp parallel private (ntask, ml, itask, idl, npdim, &
-       !$omp mr, myrank_right, i, idr, it)
-       !$ it = omp_get_thread_num() + 1
-       !$omp do schedule(dynamic) 
-       do ntask = 0, nntask*nprocs_reduce-1
-          itask = ntask / nprocs_reduce + 1
-          ml = mod(ntask, nprocs_reduce)
-          if (itask > self%ml(ml)%ntask) cycle
-          idl = self%ml(ml)%idl_itask(itask)
-          npdim = self%ml(ml)%dim_itask(:, itask)
-          do mr = iv_shift, jv_shift
-             myrank_right = modulo(myrank-mr, nprocs_shift)
-             do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
-                idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
-                call wf_operate_twobody( self%ptnl, self%ptnr, &
-                     ops(it), idl, idr, vec_reduce(ml)%p, &
-                     vec_shift(mr-iv_shift)%p, npdim )
+
+       if (op%nbody == 5) then
+          
+          !$omp parallel private (ntask, ml, itask, idl, npdim, &
+          !$omp mr, myrank_right, i, idr, it)
+          !$ it = omp_get_thread_num() + 1
+          !$omp do schedule(dynamic) 
+          do ntask = 0, nntask*nprocs_reduce-1
+             itask = ntask / nprocs_reduce + 1
+             ml = mod(ntask, nprocs_reduce)
+             if (itask > self%ml(ml)%ntask) cycle
+             idl = self%ml(ml)%idl_itask(itask)
+             npdim = self%ml(ml)%dim_itask(:, itask)
+             do mr = iv_shift, jv_shift
+                myrank_right = modulo(myrank-mr, nprocs_shift)
+                do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
+                   idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
+                   call wf_operate_twobody( self%ptnl, self%ptnr, &
+                        ops(it), idl, idr, vec_reduce(ml)%p, &
+                        vec_shift(mr-iv_shift)%p, npdim )
+                end do
              end do
           end do
-       end do
-       !$omp end do
-       !$omp end parallel
+          !$omp end do
+          !$omp end parallel
 
+       else if (op%nbody ==  11) then
+          
+          !$omp parallel private(ml, idl, mr, myrank_right, i, idr, it)
+          !$ it = omp_get_thread_num() + 1
+          do ml = 0, nprocs_reduce-1
+             !$omp do schedule(dynamic)
+             do idl = self%idl_se(1,ml), self%idl_se(2,ml)
+                do mr = iv_shift, jv_shift
+                   myrank_right = modulo(myrank-mr, nprocs_shift)
+                   do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
+                      idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
+                      call wf_operate_pppn_tbtd(self%ptnl, self%ptnr, &
+                           ops(it), idl, idr, vec_reduce(ml)%p, &
+                           vec_shift(mr-iv_shift)%p)
+                   end do
+                end do
+             end do
+             !$omp end do nowait
+          end do
+          !$omp end parallel
+
+       else if (op%nbody ==  13) then
+
+          !$omp parallel private(ml, idl, mr, myrank_right, i, idr, it)
+          !$ it = omp_get_thread_num() + 1
+          do ml = 0, nprocs_reduce-1
+             !$omp do schedule(dynamic)
+             do idl = self%idl_se(1,ml), self%idl_se(2,ml)
+                do mr = iv_shift, jv_shift
+                   myrank_right = modulo(myrank-mr, nprocs_shift)
+                   do i = 1, op%mlmr(ml,myrank_right)%idl(idl)%n
+                      idr = op%mlmr(ml,myrank_right)%idl(idl)%id(i)
+                      call wf_operate_tb_beta(self%ptnl, self%ptnr, &
+                           ops(it), idl, idr, vec_reduce(ml)%p, &
+                           vec_shift(mr-iv_shift)%p)
+                   end do
+                end do
+             end do
+             !$omp end do nowait
+          end do
+          !$omp end parallel
+
+       else
+          stop "ERROR nbody not implemented in expc_val_tbtd"
+       end if
+          
        call shift_mpi_middle(jv_shift, .false.)
-
-    end do/* iv_shift */
+    end do /* iv_shift */
 
 
     call shift_mpi_finalize()
 
 
     nj = maxval(n_jorb)
-    ns = 0
-    mm = op%mm
-    !$omp parallel do private(nn, n1, n2, ipn, n, it) &
-    !$omp& reduction(+:ns) schedule(dynamic)
-    do nn = 0, nj**2-1
-       n2 = nn / nj + 1
-       n1 = mod(nn, nj) + 1
-       do ipn = 1, 2
-          if (.not. allocated(op%nocc1b(ipn,n1,n2)%m)) cycle
-          n = size( op%nocc1b(ipn,n1,n2)%m(mm)%v )
-          if (n == 0) cycle
-          ns = ns + n
-          do it = 1, nt
-             op%nocc1b(ipn,n1,n2)%m(mm)%v &
-                  = op%nocc1b(ipn,n1,n2)%m(mm)%v &
-                  + ops(it)%nocc1b(ipn,n1,n2)%m(mm)%v
-          end do
-       end do
+
+    do it = 1, nt
+       call add_opr_m( op, 1.d0, ops(it) )
     end do
 
-
-    
-    !$omp parallel do private(nn, n1, n2, n3, n4, ipn, n, mm, it) &
-    !$omp& reduction(+: ns) schedule(dynamic)
-    do nn = 0, nj**4-1
-       n4 = nn / nj**3 + 1
-       n3 = mod(nn, nj**3) / nj**2 + 1
-       n2 = mod(nn, nj**2) / nj + 1
-       n1 = mod(nn, nj) + 1
-       do ipn = 1, 3
-          if (.not. allocated(op%nocc2b(ipn,n1,n2,n3,n4)%m)) cycle
-          do mm = lbound( op%nocc2b(ipn,n1,n2,n3,n4)%m, 1 ), &
-               ubound( op%nocc2b(ipn,n1,n2,n3,n4)%m, 1 )
-             n = size( op%nocc2b(ipn,n1,n2,n3,n4)%m(mm)%v )
-             if (n == 0) cycle
-             ns = ns + n
-             do it = 1, nt
-                op%nocc2b(ipn,n1,n2,n3,n4)%m(mm)%v &
-                     = op%nocc2b(ipn,n1,n2,n3,n4)%m(mm)%v &
-                     + ops(it)%nocc2b(ipn,n1,n2,n3,n4)%m(mm)%v
-             end do
-          end do
-       end do
-    end do
-
-    if (.not. present(vr)) call deallocate_l_vec (vt%p)
+    if (is_vt) call deallocate_l_vec( vt%p )
 
     do it = 1, nt
        call finalize_opr_m(ops(it))
     end do
     deallocate(ops)
-    
+
+    call stop_stopwatch(time_tbtd)
+
 #ifdef MPI
-    allocate( vi(ns), vo(ns) )
+    call start_stopwatch(time_mpi_tbtd)
+    allocate( vi(maxns), vo(maxns) )
 
     ns = 0
-    mm = op%mm
+!    mm = op%mm
     do nn = 0, nj**2-1
        n2 = nn / nj + 1
        n1 = mod(nn, nj) + 1
-       do ipn = 1, 2
+       do ipn = lbound(op%nocc1b, 1), ubound(op%nocc1b, 1)
           if (.not. allocated(op%nocc1b(ipn,n1,n2)%m)) cycle
-          n = size( op%nocc1b(ipn,n1,n2)%m(mm)%v )
-          if (n == 0) cycle
-          vi(ns+1:ns+n) = op%nocc1b(ipn,n1,n2)%m(mm)%v
-          ns = ns + n
+          do mm = lbound(op%nocc1b(ipn,n1,n2)%m, 1), &
+               ubound(op%nocc1b(ipn,n1,n2)%m, 1)
+             if (.not. allocated(op%nocc1b(ipn,n1,n2)%m(mm)%v)) cycle
+             n = size( op%nocc1b(ipn,n1,n2)%m(mm)%v )
+             if (n == 0) cycle
+             if (ns + n > maxns) stop "increase maxns in bp_expc_val_tbtd"
+             vi(ns+1:ns+n) = op%nocc1b(ipn,n1,n2)%m(mm)%v
+             ns = ns + n
+          end do
        end do
     end do
     
@@ -870,12 +905,14 @@ contains
        n3 = mod(nn, nj**3) / nj**2 + 1
        n2 = mod(nn, nj**2) / nj + 1
        n1 = mod(nn, nj) + 1
-       do ipn = 1, 3
+       do ipn = lbound(op%nocc2b, 1), ubound(op%nocc2b, 1)
           if (.not. allocated(op%nocc2b(ipn,n1,n2,n3,n4)%m)) cycle
           do mm = lbound( op%nocc2b(ipn,n1,n2,n3,n4)%m, 1 ), &
                ubound( op%nocc2b(ipn,n1,n2,n3,n4)%m, 1 )
+             if (.not. allocated( op%nocc2b(ipn,n1,n2,n3,n4)%m(mm)%v )) cycle
              n = size( op%nocc2b(ipn,n1,n2,n3,n4)%m(mm)%v )
              if (n==0) cycle
+             if (ns + n > maxns) stop "increase maxns in bp_expc_val_tbtd"
              vi(ns+1:ns+n) = reshape( &
                   op%nocc2b(ipn,n1,n2,n3,n4)%m(mm)%v, (/n/) )
              ns = ns + n
@@ -887,16 +924,20 @@ contains
          mpi_sum, mpi_comm_world, ierr)
 
     ns = 0
-    mm = op%mm
+    ! mm = op%mm
     do nn = 0, nj**2-1
        n2 = nn / nj + 1
        n1 = mod(nn, nj) + 1
-       do ipn = 1, 2
+       do ipn = lbound(op%nocc1b, 1), ubound(op%nocc1b, 1)
           if (.not. allocated(op%nocc1b(ipn,n1,n2)%m)) cycle
-          n = size( op%nocc1b(ipn,n1,n2)%m(mm)%v )
-          if (n == 0) cycle
-          op%nocc1b(ipn,n1,n2)%m(mm)%v = vo(ns+1:ns+n)
-          ns = ns + n
+          do mm = lbound( op%nocc1b(ipn,n1,n2)%m, 1 ), &
+               ubound( op%nocc1b(ipn,n1,n2)%m, 1 )
+             if (.not. allocated( op%nocc1b(ipn,n1,n2)%m(mm)%v )) cycle
+             n = size( op%nocc1b(ipn,n1,n2)%m(mm)%v )
+             if (n == 0) cycle
+             op%nocc1b(ipn,n1,n2)%m(mm)%v = vo(ns+1:ns+n)
+             ns = ns + n
+          end do
        end do
     end do
 
@@ -905,7 +946,7 @@ contains
        n3 = mod(nn, nj**3) / nj**2 + 1
        n2 = mod(nn, nj**2) / nj + 1
        n1 = mod(nn, nj) + 1
-       do ipn = 1, 3
+       do ipn = lbound(op%nocc2b, 1), ubound(op%nocc2b, 1)
           if (.not. allocated(op%nocc2b(ipn,n1,n2,n3,n4)%m)) cycle
           do mm = lbound( op%nocc2b(ipn,n1,n2,n3,n4)%m, 1 ), &
                ubound( op%nocc2b(ipn,n1,n2,n3,n4)%m, 1 )
@@ -921,15 +962,12 @@ contains
     end do
 
     deallocate(vi, vo)
+    call stop_stopwatch(time_mpi_tbtd)
 #endif
 
-    call stop_stopwatch(time_tbtd)
+!    call print_tbtd_op(op)
+
     
   end subroutine bp_ex_val_tbtd
-
-
-  
-  
-
 
 end module bp_expc_val

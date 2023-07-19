@@ -4,7 +4,7 @@ module partition
   use mpi 
 #endif
   use constant, only : kmbit, kdim, kwf, c_no_init, &
-       mpi_kwf, mpi_kdim, mpi_kmbit, max_int4
+       mpi_kwf, mpi_kdim, mpi_kmbit, mpi_nkmbit, max_int4
   use model_space
   use class_stopwatch
   implicit none
@@ -89,6 +89,8 @@ contains
 
     call skip_comment(lun)
     read(lun, *) self%n_ferm(1), self%n_ferm(2), self%iprty
+
+    if ( modulo(sum(self%n_ferm), 2) /= modulo(mtot, 2)) stop "ERROR: mtot"
 
     ! read partition information of proton, neutron sectors
     call skip_comment(lun)
@@ -278,12 +280,14 @@ contains
          self%pn(ipn)%n_mbit = 0
          n_idmn = 0
          n_mbarray = 0
+         
          !$omp parallel do private(i) schedule(dynamic)
          do i = 1+myrank, self%pn(ipn)%n_id, nprocs
             call set_ptn_mbit_arr( i, self%pn(ipn)%id(i), &
                  self%pn(ipn)%nocc(:,i), ipn, &
                  mbarray, n_mbarray, idmn, n_idmn )
          end do
+         
 #ifdef MPI
          allocate( nr_idmn(0:nprocs-1), nr_mb(0:nprocs-1) )
          call mpi_allgather( n_idmn,    1, mpi_integer, &
@@ -330,8 +334,8 @@ contains
                  mpi_comm_world, mympi_stat, ierr )
 
             call mpi_sendrecv( &
-                 mbarray,    n_mbarray, mpi_kmbit, dest, 0, &
-                 t_mbarray, nn_mbarray, mpi_kmbit, from, 0, &
+                 mbarray,    n_mbarray * mpi_nkmbit, mpi_kmbit, dest, 0, &
+                 t_mbarray, nn_mbarray * mpi_nkmbit, mpi_kmbit, from, 0, &
                  mpi_comm_world, mympi_stat, ierr )
             
             n_idmn = nn_idmn
@@ -369,14 +373,15 @@ contains
       integer, parameter :: max_orb=30
       integer :: nz_occ, k_nz_occ(max_orb), i_idmn, i_mbarray
       type(type_mbit), allocatable :: mbs(:)
-      integer, parameter :: max_mmb=10000000
+      ! integer, parameter :: max_mmb=10000000 ! +OMP Fugaku memory overflow
+      integer, parameter :: max_mmb=1000000
 
       if (max_orb < n_jorb(ipn)) stop "increase max_orb"
 
       nz_occ = 0
       do i = 1, n_jorb(ipn)
          if (nocc(i) == 0) cycle
-         nz_occ = nz_occ +1
+         nz_occ = nz_occ + 1
          k_nz_occ(nz_occ) = i
       end do
 
@@ -870,9 +875,8 @@ contains
             self%max_local_dim, self%ndim/nprocs
        write(*,*) 
        if (self%max_local_dim > max_int4) then
-          write(*,*) "**************  WARNING *******************"
-          write(*,*) "*** max_local_dim excceeds integer4",self%max_local_dim
-          write(*,*) "*******************************************"
+          write(*,'(/,a,i15)') "warning : max_local_dim excceeds integer4", &
+               self%max_local_dim
 #ifdef SPARC
           stop
 #endif

@@ -13,7 +13,7 @@ module wavefunction
   public :: type_vec_p, wf_alloc_vec, wf_alloc_vecs, wf_random_vec, &
        load_wf, dot_product_global, &
        ex_occ_orb, ph_ratio_nocc, ratio_nocc, hw_ratio_nocc, &
-       ratio_nocc_orbs
+       inf_entropy, inf_entropy_pn, ratio_nocc_orbs, hw_proj
 
 
   type type_vec_p
@@ -46,13 +46,20 @@ contains
     use lib_matrix, only: gaussian_random_mat
     type(type_vec_p), intent(inout) :: self
     type(type_ptn_pn), intent(in) :: ptn
+    real(8) :: x
     if (associated(self%p)) call deallocate_l_vec(self%p)
     call wf_alloc_vec(self, ptn)
     if (ptn%max_local_dim > ptn%local_dim) self%p(ptn%local_dim+1:) = 0._kwf
     call gaussian_random_mat(ptn%local_dim, self%p)
-    self%p = 1.d0 / sqrt(dot_product_global(self, self)) * self%p
-  end subroutine wf_random_vec
 
+    ! self%p = 1.d0 / sqrt(dot_product_global(self, self)) * self%p
+    ! ad hoc solution for SEGV Ge76 jun45
+    x = 1.d0 / sqrt(dot_product_global(self, self))
+    self%p(:) = x * self%p(:)
+    
+  end subroutine wf_random_vec
+  
+  
   function dot_product_global(self, rwf) result (r)
     ! <self|rwf>  self and rwf are global vectors
     !  "r" should be real(8), not real(kwf)
@@ -193,7 +200,7 @@ contains
 
 
   subroutine hw_ratio_nocc(self)
-    ! overlap prob. for hbar-omega excitaion 
+    ! overlap prob. for hbar-omega excitation 
     type(type_vec_p), intent(in) :: self
     type(type_ptn_pn), pointer :: ptn
     integer :: ipn, id, i, j, k, n, idpn(2)
@@ -256,7 +263,7 @@ contains
 
   contains
 
-    subroutine sum_nhw_ratio( nhw_ratio) 
+    subroutine sum_nhw_ratio( nhw_ratio ) 
       real(8), intent(out) :: nhw_ratio(lhw:hhw)
       integer :: id, i, n
       integer(kdim) :: mq
@@ -292,6 +299,98 @@ contains
     end subroutine lowest_hw
 
   end subroutine hw_ratio_nocc
+
+
+
+
+
+  subroutine hw_proj(self, ihw)
+    ! projection to hw-excited subspace, temporal
+    type(type_vec_p), intent(inout) :: self
+    integer, intent(in) :: ihw
+    type(type_ptn_pn), pointer :: ptn
+    integer :: ipn, id, i, j, k, n, idpn(2)
+    integer :: nhwn(n_jorb_pn), lhw, hhw, l1, l2, h1, h2
+    integer, allocatable :: nhw_occ(:)
+    real(8), allocatable :: t(:)
+
+    if (myrank==0) write(*,'(a,i3)') ' hw subspace projection ', ihw
+
+    ptn => self%ptn
+
+    i = 0
+    ipn = 1
+    do k = 1, n_jorb_pn
+       nhwn(k) = 2*norb(k) + lorb(k)
+    end do
+
+    call lowest_hw(jorbn(:n_jorb(1),1), nhwn(:n_jorb(1)),  &
+         n_ferm(1), l1, h1)
+    call lowest_hw(jorbn(:n_jorb(2),2), nhwn(n_jorb(1)+1:), &
+         n_ferm(2), l2, h2)
+    lhw = l1 + l2
+    hhw = h1 + h2
+    if (lhw == hhw) return
+    
+    allocate( nhw_occ(ptn%n_nocc) )
+    !$omp parallel do private(i, id, idpn)
+    do i = 1, ptn%n_nocc
+       idpn(1) = -1
+       do id = 1, ptn%n_pidpnM
+          if (i /= ptn%srt2nocc(id)) cycle
+          idpn(:) = ptn%pidpnM_pid_srt(1:2, id)
+          exit
+       end do
+       if (idpn(1) < 0) then 
+          nhw_occ(i) = -10000
+          cycle
+       end if
+       nhw_occ(i) = &
+            & sum(nhwn(:n_jorb(1))   * ptn%pn(1)%nocc(:, idpn(1)) ) &
+            + sum(nhwn(n_jorb(1)+1:) * ptn%pn(2)%nocc(:, idpn(2)) )    
+    end do
+
+    call proj_ihw( ihw )
+
+
+  contains
+
+    subroutine proj_ihw( ihw )
+      integer, intent(in) :: ihw
+      integer :: id, i
+      integer(kdim) :: mq
+
+      !$omp parallel do private(id, i, mq) 
+      do id = ptn%idl_start, ptn%idl_end
+         i = ptn%srt2nocc( ptn%pid_dpl2srt(id) )
+         if (nhw_occ(i) == ihw + lhw ) cycle
+         do mq = ptn%local_dim_acc_start(id),  ptn%local_dim_acc(id)
+            self%p(mq) = 0._kwf
+         end do
+      end do
+    end subroutine proj_ihw
+
+    subroutine lowest_hw(jorbn, nhwn, nf, lhw, hhw)
+      integer, intent(in) :: jorbn(:), nhwn(:), nf
+      integer, intent(out) :: lhw, hhw
+      integer, allocatable :: t(:)
+      integer :: i, j, n
+      n = sum(jorbn(:)+1)
+      allocate( t(n) )
+      n = 0
+      do i = 1, size(jorbn)
+         do j = 1, jorbn(i)+1
+            n = n + 1
+            t(n) = nhwn(i)
+         end do
+      end do
+      t = qsorti(t)
+      lhw = sum(t(:nf))
+      hhw = sum(t(size(t)-nf+1:))
+    end subroutine lowest_hw
+
+  end subroutine hw_proj
+
 
 
 
@@ -456,6 +555,151 @@ contains
 
 
 
+
+  function inf_entropy(self) result (r)
+    !
+    ! Shannon information entropy of M-scheme w.f.
+    !
+    type(type_vec_p), intent(in) :: self
+    real(8) :: r
+    integer(kdim) :: mq
+    real(8) :: t
+    
+    r = 0.d0
+    !$omp parallel do private(mq, t) reduction (+: r)
+    do mq = 1, size(self%p, kind=kdim)
+       t = self%p(mq) ** 2
+       if (t < 1.d-14) cycle
+       r = r - t * log(t)
+    end do
+
+#ifdef MPI
+    t = r
+    call mpi_allreduce(t, r, 1, mpi_real8, &
+         mpi_sum, mpi_comm_world, ierr)
+#endif
+
+  end function inf_entropy
+
+
+  subroutine inf_entropy_pn(self, r)
+    !
+    ! Shannon information entropy of M-scheme w.f. 
+    ! for proton, neutron 
+    !
+    type(type_vec_p), intent(in) :: self
+    real(8),intent(out) :: r(2)
+    real(8) :: t, x
+    integer :: jj_pn(2), ipn, id,  n, mm, i
+    integer(kdim) :: mq
+    type(type_ptn_pn), pointer :: ptn
+    type type_r8p
+       real(8),  allocatable  :: p(:)
+    end type type_r8p
+    type (type_r8p) :: tpn(2)
+    real(8), allocatable :: tt(:)
+    type type_acc
+       integer(kdim), allocatable :: p(:,:)
+    end type type_acc
+    type(type_acc) :: acc(2)
+#ifndef SPARC
+    integer(kdim) :: nid
+#else
+    integer :: nid
+#endif
+
+    ptn => self%ptn
+
+    jj_pn = 0
+    !$omp parallel do private(ipn, i, mq, mm)
+    do ipn = 1, 2
+       do i = 1, ptn%pn(ipn)%n_id
+          if (jj_pn(ipn) < ptn%pn(ipn)%id(i)%max_m) &
+               jj_pn(ipn) = ptn%pn(ipn)%id(i)%max_m
+       end do
+       allocate( acc(ipn)%p( ptn%pn(ipn)%n_id, -jj_pn(ipn):jj_pn(ipn) ) )
+       acc(ipn)%p = 0
+       mq = 0
+       do i = 1, ptn%pn(ipn)%n_id
+          do mm = ptn%pn(ipn)%id(i)%min_m, ptn%pn(ipn)%id(i)%max_m, 2
+             acc(ipn)%p( i, mm ) = mq
+             mq = mq + ptn%pn(ipn)%id(i)%mz(mm)%n
+          end do
+       end do
+       if (mq /= ptn%pn(ipn)%n_mbit) stop "error in inf_entropy_pn"
+       allocate( tpn(ipn)%p( ptn%pn(ipn)%n_mbit ) )
+    end do
+
+    call sum_pn( self%p, tpn(1)%p, tpn(2)%p )
+    
+#ifdef MPI
+    do ipn = 1, 2
+#ifdef SPARC    
+       if (size(tpn(ipn)%p, kind=kdim) > max_int4) &
+            stop "not implemented in inf_entropy_pn"
+#endif
+       nid = size(tpn(ipn)%p, kind=kdim)
+       allocate( tt(nid) )
+       tt = tpn(ipn)%p
+       call mpi_allreduce(tt, tpn(ipn)%p, nid, mpi_real8, &
+            mpi_sum, mpi_comm_world, ierr)
+       deallocate(tt)
+    end do
+#endif
+
+    do ipn = 1, 2
+       x = 0.d0
+       !$omp parallel do private(mq, t) reduction (+: x)
+       do mq = 1, size(tpn(ipn)%p, kind=kdim)
+          t = tpn(ipn)%p(mq)
+          if (t < 1.d-14) cycle
+          x = x - t * log(t)
+       end do
+       r(ipn) = x
+    end do
+    
+    deallocate( acc(1)%p, acc(2)%p, tpn(1)%p, tpn(2)%p )
+
+  contains
+
+    subroutine sum_pn(v, tp, tn)
+      real(kwf), intent(in), target :: v(:)
+      real(8), intent(inout) :: tp(:), tn(:)
+      integer :: id, idp, idn, mmp, mmn, ij, i, j
+      integer(kdim) :: mqp, mqn
+      real(8) :: t
+      real(kwf), pointer :: vt(:)
+      tp = 0.d0
+      tn = 0.d0
+      !$omp parallel do private(id, vt, idp, idn, mmp, mmn, mqp, mqn, &
+      !$omp    ij, i, j, t) reduction (+: tp, tn)
+      do id = ptn%idl_start, ptn%idl_end
+         vt => v(ptn%local_dim_acc_start(id) : ptn%local_dim_acc(id))
+         idp = ptn%pidpnM_pid(1,id)
+         idn = ptn%pidpnM_pid(2,id)
+         mmp = ptn%pidpnM_pid(3,id)
+         mmn = ptn%mtotal - mmp
+
+         mqp = acc(1)%p( idp, mmp )
+         mqn = acc(2)%p( idn, mmn )
+
+         ij = 0
+         do j = 1,  ptn%pn(2)%id(idn)%mz(mmn)%n
+            do i = 1, ptn%pn(1)%id(idp)%mz(mmp)%n
+               ij = ij + 1
+               t = vt(ij) ** 2
+               tp(mqp + i) = tp(mqp + i) + t
+               tn(mqn + j) = tn(mqn + j) + t
+            end do
+         end do
+      end do
+    end subroutine sum_pn
+
+
+  end subroutine inf_entropy_pn
+
+
+
   subroutine load_wf(self, ptn, fname, is_sorted)
     type(type_vec_p), intent(inout) :: self(:)
     type(type_ptn_pn), intent(in), target :: ptn
@@ -468,7 +712,7 @@ contains
     logical :: is_srt
 #ifdef MPI    
     integer(mpi_offset_kind) :: head, offset
-    integer :: mpi_status(mpi_status_size)
+    integer :: mympi_status(mpi_status_size)
 #ifndef SPARC
     integer(kdim) :: local_dim
 #else
@@ -483,15 +727,15 @@ contains
 #ifdef MPI
     call mpi_file_open(mpi_comm_world, fname, mpi_mode_rdonly, &
          mpi_info_null, fh, ierr)
-    call mpi_file_read_all(fh, neig, 1, mpi_integer, mpi_status, ierr)
-    call mpi_file_read_all(fh, mtotal, 1, mpi_integer, mpi_status, ierr)
+    call mpi_file_read_all(fh, neig, 1, mpi_integer, mympi_status, ierr)
+    call mpi_file_read_all(fh, mtotal, 1, mpi_integer, mympi_status, ierr)
     if (mtotal /= ptn%mtotal) stop "read error in load_wf"
     do i = 1, neig
-       call mpi_file_read_all(fh, x, 1, mpi_real8, mpi_status, ierr)
+       call mpi_file_read_all(fh, x, 1, mpi_real8, mympi_status, ierr)
        if (i <= size(self)) self(i)%eval = x
     end do
     do i = 1, neig
-       call mpi_file_read_all(fh, jj, 1, mpi_integer, mpi_status, ierr)
+       call mpi_file_read_all(fh, jj, 1, mpi_integer, mympi_status, ierr)
        if (i <= size(self)) self(i)%jj = jj
     end do
     if (myrank==0) write(*,'(3a,i6)') &
@@ -508,7 +752,7 @@ contains
           offset = head + mq * kwf
           local_dim = ptn%local_dim
           call mpi_file_read_at_all(fh, offset, self(i)%p, &
-               local_dim, mpi_kwf, mpi_status, ierr)
+               local_dim, mpi_kwf, mympi_status, ierr)
           if (ierr/=0) write(*,*) "error bp_load_wf_srt", &
                myrank, ierr, offset, ptn%local_dim
        else
@@ -518,7 +762,7 @@ contains
              local_dim = ptn%ndim_pid(id)
              call mpi_file_read_at(fh, offset, &
                   self(i)%p(ptn%local_dim_acc_start(id)), &
-                  local_dim, mpi_kwf, mpi_status, ierr)
+                  local_dim, mpi_kwf, mympi_status, ierr)
           end do
        end if
        head = head + ptn%ndim * kwf
@@ -585,6 +829,7 @@ contains
     character(1) :: ta, tb 
     real(kwf) :: c_ac
     integer :: lda, ldb, ldc, m, n, k
+    integer(kdim) :: kd, kk
     ta = 'n'
     tb = 'n'
     if (present(transa)) ta = transa
@@ -597,15 +842,17 @@ contains
     c_ac = 0._kwf
     if (present(c_acc)) c_ac = c_acc
 
-    
-    
-    if (kwf==4) then
-       call sgemm(ta, tb, size(c,1), size(c,2), k, &
-            & 1.0, a, size(a,1), b, size(b,1), c_ac, c, size(c,1))
-    else
-       call dgemm(ta, tb, size(c,1), size(c,2), k, &
-            & 1.d0, a, size(a,1), b, size(b,1), c_ac, c, size(c,1))
-    end if
+    kd = size(a, kind=kdim)
+
+!    do kk = 1, kd
+
+       if (kwf==4) then
+          call sgemm(ta, tb, size(c,1), size(c,2), k, &
+               & 1.0, a, size(a,1), b, size(b,1), c_ac, c, size(c,1))
+       else
+          call dgemm(ta, tb, size(c,1), size(c,2), k, &
+               & 1.d0, a, size(a,1), b, size(b,1), c_ac, c, size(c,1))
+       end if
   end subroutine matmul_gemm_vecs
 
 

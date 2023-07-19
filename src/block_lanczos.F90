@@ -15,7 +15,7 @@ module block_lanczos
   public :: tr_block_lanczos, block_dot_product_real_global, gram_schmidt_qr, &
        dot_product_real_global, maxiter_jjrefine
 
-  integer, parameter :: maxiter_jjrefine=30
+  integer, parameter :: maxiter_jjrefine=20
 
 
 contains
@@ -54,16 +54,13 @@ contains
     real(8), intent(in), optional :: eval_jj
     !
     real(kwf), allocatable :: vec(:,:)
-    integer, parameter :: n_reorth=1
     integer :: nb, nm_vec, nres, miter, n, i, itr, n_itr, iv, iv0
     integer :: itra1, itra2, itrb1, itrb2, itrc1, itrc2
-    real(8) :: tl
+    real(8) :: tl, t
     real(8), allocatable :: tmat(:,:), tevec(:,:), teval(:), &
          te_last(:), an(:,:), bn(:,:), vv_orth(:,:)
     logical :: is_load_s
-    integer :: iv_max
-
-    
+    integer :: iv_max, n_reorth, nskip_diag
 
     if (kwf==4) stop 'not implement kwf=4'
 
@@ -79,18 +76,28 @@ contains
     if (present(tol)) tl = tol
     is_load_s = .false.
     if (present(is_load_snapshot)) is_load_s = is_load_snapshot
+
+    n_reorth = 1
+!    if ( neig > 300 ) then
+!       n_reorth = 2
+!       if (myrank==0) write(*,'(a,i3)') 'n_reorth changed to ',n_reorth
+!    end if
+
+    nskip_diag = 1
+    if (nm_vec > 500 ) nskip_diag = 10
+    if (nm_vec > 1000) nskip_diag = 20
+    if (nm_vec > 2000) nskip_diag = 50
+    if (myrank == 0 .and. nskip_diag /= 1) write(*,'(a,i5)') &
+         "# of steps to skip to diagonalize Krylov subspace", nskip_diag
     
     n = nm_vec
     allocate( tmat(n, n), tevec(n, n), teval(n), &
          te_last(neig), an(nb, nb), bn(nb, nb), vv_orth(n, nb) )
     if (present(eval_jj)) n = n + nb*maxiter_jjrefine
     allocate(vec(nrow_local, n))
-!    do i = 1, nb
-!       call gaussian_random_mat(nrow_local, vec(:,i))
-!    end do
 
     tmat(:,:) = 0.d0
-    teval(:) = 0.d0
+    teval(:) = 1d4
     n_itr = 0
     iv0 = 0
 
@@ -125,13 +132,18 @@ contains
                vec(:, itrc1:itrc2), an)
 
           tmat( itrb1:itrb2, itrb1:itrb2 ) = an
-          te_last(:neig) = teval(:neig)
-          call start_stopwatch(time_diag)
-          call diagonalize(tmat(:itrb2,:itrb2), teval(:itrb2), &
-               tevec(:itrb2,:itrb2), neig)
-          call stop_stopwatch(time_diag)
-          if (myrank==0) write(*,'(a,3i5,1000f12.5)') &
-               'H  tr-b-lan', n_itr, (iv-iv0)/nb+1, itrb2, teval(:neig)
+
+          if (mod(n_itr, nskip_diag)==0 .or. iv+nb > nm_vec-2*nb) then
+             te_last(:neig) = teval(:neig)
+             call start_stopwatch(time_diag)
+             call diagonalize(tmat(:itrb2,:itrb2), teval(:itrb2), &
+                  tevec(:itrb2,:itrb2), neig)
+             call stop_stopwatch(time_diag, time_last=t)
+             if (myrank==0) then
+                write(*,'(a,3i6,10000f12.5)') 'H  tr-b-lan', n_itr, (iv-iv0)/nb+1, itrb2, teval(:neig)
+                if (mod(n_itr/nskip_diag, 10) == 0) write(*,'(a,f10.3,a)') "time diag", t, " sec"
+             end if
+          end if
 
           call start_stopwatch(time_orth)
 
@@ -139,32 +151,31 @@ contains
           !      - matmul( vec(:, itrb1:itrb2), an )
           call omp_dgemm_v_minus_v_a(vec(:, itrc1:itrc2), &
                vec(:, itrb1:itrb2), an)
-!          call dgemm('N', 'N', size(vec,1), nb, nb, &
-!               -1.d0, vec(:, itrb1:itrb2), size(vec,1), an, nb, &
-!               1.d0,  vec(:, itrc1:itrc2), size(vec,1))
 
-
-          do n = 1, n_reorth
+          do i = 1, n_reorth ! reorthgonalization
              if ( itra2 <= 0 ) exit
-             call block_dot_product_real_global(vec( :, 1:itra2 ), &
-                  vec( :, itrc1:itrc2 ), vv_orth( 1:itra2, : ) )
              !vec( :, itrc1:itrc2 ) = vec( :, itrc1:itrc2) &
              !     - matmul( vec( :, 1:itra2 ), &
              !     &         vv_orth( 1:itra2, : ) )
-
+             call block_dot_product_real_global(vec( :, 1:itra2 ), &
+                  vec( :, itrc1:itrc2 ), vv_orth( 1:itra2, : ) )
              call omp_dgemm_v_minus_v_a(vec(:, itrc1:itrc2), &
-               vec(:, 1:itra2), vv_orth)
-!             call dgemm('N', 'N', size(vec,1), nb, itra2, &
-!                  -1.d0, vec(:, 1:itra2), size(vec,1), &
-!                  vv_orth, size(vv_orth, 1), &
-!                  1.d0, vec(:, itrc1:itrc2), size(vec,1))
+                  vec(:, 1:itra2), vv_orth( 1:itra2, : ) )
           end do
-
-          call stop_stopwatch(time_orth)
-
+          
+          call stop_stopwatch(time_orth, time_last=t)
+          if (myrank==0 .and. mod(n_itr/nskip_diag, 10) == 0)&
+               write(*,'(a,f10.3,a)') "time reorth", t, " sec"
+          
           call gram_schmidt_qr(vec(:, itrc1:itrc2), bn)
           
           if (maxval( (/( bn(i,i), i=1, nb )/) ) < tl) then
+             if (.not. (mod(n_itr, nskip_diag)==0 .or. iv+nb > nm_vec-2*nb) ) then
+                call start_stopwatch(time_diag)
+                call diagonalize(tmat(:itrb2,:itrb2), teval(:itrb2), &
+                     tevec(:itrb2,:itrb2), neig)
+                call stop_stopwatch(time_diag)
+             end if
              if (myrank==0) write(*,'(a,100e10.2)') &
                   " *** ERROR: bn too small *** ", (/( bn(i,i), i=1, nb )/)
              exit outer
@@ -177,10 +188,12 @@ contains
           tmat( itrc1:itrc2, itrb1:itrb2 ) = bn
           tmat( itrb1:itrb2, itrc1:itrc2 ) = transpose(bn)
 
-          if ( all( abs(teval(:neig)-te_last(:neig)) < tl ) )  then 
-             if (myrank==0) write(*,'(a, i5, 1000e10.2)') &
-                  "H   converged", n_itr, te_last(:neig)-teval(:neig)
-             exit outer
+          if (mod(n_itr, nskip_diag)==0 .or. iv+nb > nm_vec-2*nb) then
+             if ( all( abs(teval(:neig)-te_last(:neig)) < tl ) )  then 
+                if (myrank==0) write(*,'(a, i5, 10000e10.2)') &
+                     "H   converged", n_itr, te_last(:neig)-teval(:neig)
+                exit outer
+             end if
           end if
        end do
        
@@ -195,12 +208,12 @@ contains
             teval(:itrb2), tevec(:itrb2,:itrb2), nres )
        call stop_stopwatch(time_diag)
 
-       if (myrank==0) write(*,'(a,2i5,1000f10.3)') &
+       if (myrank==0) write(*,'(a,2i5,10000f10.3)') &
             'restart ',itr, n_itr, teval(:nres)
        call compress_block_vecs(vec, tevec, tmat, nres, itrb2)
        iv0 = nres
 
-!       call dump_snapshot( nres+nb )
+       call dump_snapshot( nres+nb )
        
     end do outer
 
@@ -209,7 +222,7 @@ contains
 
     call compress_block_vecs(vec, tevec, tmat, neig, itrb2)
 
-!    call dump_snapshot( neig+nb )
+    call dump_snapshot( neig+nb )
 
     allocate( eval(neig), evec(nrow_local, neig) )
     eval(:)   = teval(:neig)
@@ -270,8 +283,8 @@ contains
       tmat( :nres, nres+1:nres+nb ) &
            = transpose( tmat(nres+1:nres+nb, :nres) )
 
-       call stop_stopwatch(time_restart)
-
+      call stop_stopwatch(time_restart)
+       
     end subroutine compress_block_vecs
 
 
@@ -279,39 +292,13 @@ contains
       ! dump vec(1, 2, ...,  n), tmat(:n,:n)
       use lanczos, only: is_save_tmp, fn_base_dump
       use class_stopwatch, only: time_io_write, time_dump
-      use bp_io,  only: dump_snapshot_mpi_block
+      use bp_io,  only: dump_snapshot_block
       integer, intent(in) :: n
-      integer :: lun=22
-      character(len=maxchar) :: fn, cr
-      real(8) :: t
 
       if (.not. is_save_tmp) return
 
-      if (is_mpi) then 
-         call dump_snapshot_mpi_block( &
-              n, vec, size(vec, 1, kind=kdim), tmat(:n,:n))
-         return
-      end if
-
-      
-      call start_stopwatch(time_dump, is_mpi_barrier=.true.)
-
-      write(cr, '(i0)') myrank
-      fn = trim(fn_base_dump)//trim(cr)
-      call start_stopwatch(time_io_write)
-      open(lun, file=fn, form='unformatted')
-      write(lun) n
-      write(lun) tmat(:n,:n)
-      write(lun) vec(:,:n)
-      close(lun)
-      call stop_stopwatch(time_io_write)
-
-      call stop_stopwatch(time_dump, time_last=t, is_mpi_barrier=.true.)
-
-      if (myrank==0) write(*,'(a,f10.5,x,a,f8.2,a,i5/)') &
-           "time dump_snapshot I/O: ", t, trim(fn_base_dump)//"(myrank) ", &
-           (kwf*nrow_local*n+8.d0*n**2)/t/(1024.d0**3), "GB/s x ",nprocs
-
+      call dump_snapshot_block( &
+           n, vec, size(vec, 1, kind=kdim), tmat(:n,:n))
     end subroutine dump_snapshot
 
 
@@ -319,33 +306,32 @@ contains
     subroutine load_snapshot(n)
       ! load snapshot vec(1, 2, ...,  n), tmat(:n,:n)
       use lanczos, only: is_save_tmp, fn_base_dump
-      use bp_io, only : load_snapshot_mpi_block
+      use bp_io, only : load_snapshot_block
       integer, intent(out) :: n
-      integer :: i, lun=22, ist
-      character(len=maxchar) :: fn, cr
+      integer :: i
+      real(8), allocatable :: to(:,:)
       real(8) :: t
 
-      if (is_mpi) then 
-         call load_snapshot_mpi_block( &
-              n, vec, size(vec, 1, kind=kdim), tmat(:n,:n) )
-         return
+      call load_snapshot_block( &
+           n, vec, size(vec, 1, kind=kdim), tmat )
+
+      ! check norm-orthogonalized 
+      allocate( to(n, n) )
+      call block_dot_product_real_global(vec(:, :n), vec(:, :n), to)
+      do i = 1, n
+         to(i,i) = to(i,i) - 1.d0
+      end do
+      t = maxval(abs(to))
+      
+      if (myrank==0) then 
+         write(*,'(/,a,i5,g10.3,/)') ' check loaded snapshot vecs', n, t
+         if (t > 1.d-5) then
+            write(*,*) '**************************************************************'
+            write(*,*) '*** WARNING *** load snapshot norm-orthog. failed : ', t
+            write(*,*) '**************************************************************'
+         end if
       end if
 
-      
-      call start_stopwatch(time_tmp, is_reset=.true., is_mpi_barrier=.true.)
-      write(cr, '(i0)') myrank
-      fn = trim(fn_base_dump)//trim(cr)
-      open(lun, file=fn, form='unformatted')
-      read(lun) n
-      read(lun) tmat(:n,:n)
-      read(lun) vec(:,:n)
-      close(lun)
-      call stop_stopwatch(time_tmp, is_mpi_barrier=.true.)
-      t = time_tmp%time
-      if (myrank==0) write(*,'(a,f10.5,x,a,f8.2,a)') &
-           "time load dump_snapshot I/O: ", &
-           t, trim(fn_base_dump)//"(myrank) ", &
-           (kwf*nrow_local*n+8.d0*n**2)/t/(1024.d0**3), "GB/s"
     end subroutine load_snapshot
 
 
@@ -393,12 +379,15 @@ contains
               tevec(:itrb2,:itrb2), nb)
          call stop_stopwatch(time_diag)
 
-         if ( all( abs(teval(:nb)-eval_jj) < tol ) )  then 
+         ! if ( all( abs(teval(:nb)-eval_jj) < tol ) )  then 
+         if ( all( teval(:nb)-eval_jj < tol ) )  then 
             if (myrank==0) write(*,'(a, i5, 1000e10.2)') &
-                 "  JJ converged", iv/nb+1, teval(:nb)-eval_jj
+                    "  JJ converged", iv/nb+1, teval(:nb)-eval_jj
+            if (myrank==0 .and. teval(1)-eval_jj < -tol ) &
+                 write(*,*) 'WARNING negative JJ'
             exit
          end if
-         if (myrank==0) write(*,'(a,2i5,1000e10.2)') &
+         if (myrank==0) write(*,'(a,2i6,10000e10.2)') &
               '  JJ tr-b-lan', iv/nb+1, itrb2, teval(:nb)-eval_jj
 
          call start_stopwatch(time_orth)
@@ -407,10 +396,10 @@ contains
               vec(:, itrb1:itrb2), an)
 
          if ( itra2 > 0 ) then
-            call block_dot_product_real_global(vec( :, 1:itra2 ), &
+            call block_dot_product_real_global( vec( :, 1:itra2 ), &
                  vec( :, itrc1:itrc2 ), vv_orth( 1:itra2, : ) )
-            call omp_dgemm_v_minus_v_a(vec(:, itrc1:itrc2), &
-                 vec(:, 1:itra2), vv_orth)
+            call omp_dgemm_v_minus_v_a( vec(:, itrc1:itrc2), &
+                 vec( :, 1:itra2), vv_orth( 1:itra2, : ) )
          end if
 
          call stop_stopwatch(time_orth)
@@ -433,11 +422,12 @@ contains
          if (present(bnout)) then
             x = maxval( (/( 1.d0-sum(tevec(:nb,i)**2), i=1, nb )/) )
             if ( myrank==0 .and.  x > tol*10.d0 ) &
-                 write(*,'(a, e10.2)') 'WARNING: JJ block norm failure in jj_refine ', x
+                 write(*,'(a, e10.2)') 'WARNING: JJ block norm diff. in jj_refine ', x
             bnout = matmul( transpose(tevec(:nb, :nb)), bnout )
          end if
          
          call compress_block_vecs(vec, tevec, tmat, nb, itrb2)
+         
       end if
       
       deallocate( tmat, tevec, teval, an, bn, vv_orth )

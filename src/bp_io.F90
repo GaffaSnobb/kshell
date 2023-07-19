@@ -23,7 +23,8 @@ module bp_io
   public :: bp_save_wf, bp_load_wf, v_remove_j
   public :: dump_snapshot_mpi_sf, load_snapshot_mpi_sf, &
        set_dump_fname_mpi_sf
-  public :: dump_snapshot_mpi_block, load_snapshot_mpi_block
+  public :: dump_snapshot_block, load_snapshot_block
+  public :: file_write_vec_cnk, file_read_vec_cnk
 
 contains
 
@@ -151,7 +152,9 @@ contains
           if (op_init_wf%nbody == -6 .or. op_init_wf%nbody == -7) &
                iirank = jorbn( op_init_wf%crt_orb, -5-op_init_wf%nbody)
           
-          if (iirank /= 0 .and. jtot_i > 0 ) then
+!          if (op_init_wf%irank /= 0 .and. evec(i)%jj > 0 &
+!               .and. neig_lw_i == i) then
+          if ( iirank /= 0 .and. jtot_i > 0 ) then
              call j_proj( ptn, evec(i), evec(i)%jj, &
                   jtot_i - iirank , &
                   jtot_i + iirank )
@@ -164,7 +167,10 @@ contains
        end if
        
        x = dot_product_global(evec(i), evec(i))
-       if ( x < 1.d-8 ) stop "small norm in bp_load_wf_srt"
+       if ( x < 1.d-8 ) then
+          if (myrank==0) write(*,*) ' Norm : ', x
+          stop "small norm in bp_load_wf_srt"
+       end if
        if (present(op_init_wf)) then
 
 
@@ -178,7 +184,7 @@ contains
              if (myrank==0) write(*,*) &
                   "WARNING: norm of initital vector too small", i, x
              if (myrank==0) write(*,*) ' *** decrease mpi_cnk ***', mpi_cnk
-             stop "failed read w.f."
+             if (abs(x-1.d0) > 1.d-3) stop "failed read w.f."
           end if
        end if
        x = 1.d0/sqrt(x)
@@ -205,6 +211,10 @@ contains
 
        x = dcg(evec(i)%jj, mtot, iirank, mtot_i-mtot, &
             jtot_i, mtot_i)
+
+       if (op_init_wf%nbody == -1 .or. op_init_wf%nbody == -2) &
+            x = dcg(jtot_i, mtot_i, iirank, mtot-mtot_i, &
+            evec(i)%jj, mtot)
 
        if (abs(x)>1.d-8) then
           sum_rule = sum_rule / x**2 
@@ -240,13 +250,14 @@ contains
     integer, parameter :: lun=21
     integer :: neig, i, fh, ierr
     type(type_vec_p) :: vt
-    integer(kdim) :: mq
+    integer(kdim) :: mq, ichunk
     type(opr_m) :: op_copy ! dummy for sort-copy
     real(8) :: dsize
+! character(len=maxchar) :: fn_swf
+! write(fn_swf, '(1a,i6.6,'_',i6.6,a)') trim(fname), neig, myrank, '.swf'
 #ifdef MPI    
     integer(mpi_offset_kind) :: head, offset
     integer :: mympi_stat(mpi_status_size), ld
-    integer(kdim) :: ichunk
 #endif
     logical :: l_exist
 
@@ -278,11 +289,13 @@ contains
             mympi_stat, ierr)
        offset = offset + 4
        do i = 1, neig
-          call mpi_file_write_at(fh, offset, v(i)%eval, 1, mpi_real8, mympi_stat, ierr)
+          call mpi_file_write_at(fh, offset, v(i)%eval, 1, mpi_real8, &
+               mympi_stat, ierr)
           offset = offset + 8
        end do
        do i = 1, neig
-          call mpi_file_write_at(fh, offset, v(i)%jj, 1, mpi_integer, mympi_stat, ierr)
+          call mpi_file_write_at(fh, offset, v(i)%jj, 1, mpi_integer, &
+               mympi_stat, ierr)
           offset = offset + 4
        end do
     end if
@@ -297,13 +310,13 @@ contains
        offset = head + mq * kwf
 
        call start_stopwatch(time_tmp, is_mpi_barrier=.true.)
-
-       do ichunk = 1, self%ptnl%local_dim, mpi_cnk
-          ld = int( min(mpi_cnk, self%ptnl%local_dim - ichunk + 1), kind=4 )
-          call mpi_file_write_at( fh, offset+(ichunk-1)*kwf, vt%p(ichunk), &
-               ld, mpi_kwf, mympi_stat, ierr )
-          if ( ierr /= 0 ) write(*,*) "error mpi_file_write_at_all", myrank, ierr
-       end do
+       ! do ichunk = 1, self%ptnl%local_dim, mpi_cnk
+       !    ld = int( min(mpi_cnk, self%ptnl%local_dim - ichunk + 1), kind=4 )
+       !    call mpi_file_write_at( fh, offset+(ichunk-1)*kwf, vt%p(ichunk), &
+       !         ld, mpi_kwf, mympi_stat, ierr )
+       !    if ( ierr /= 0 ) write(*,*) "error mpi_file_write_atl", myrank, ierr
+       ! end do
+       call mympi_file_write_at_vec(fh, offset, vt%p, self%ptnl%local_dim)
 
        call stop_stopwatch(time_tmp, is_mpi_barrier=.true.)
 
@@ -326,7 +339,8 @@ contains
     do i = 1, neig
        call bp_operate(self, vt, op_copy, v(i))
        call start_stopwatch(time_tmp)
-       write(lun) vt%p(:self%ptnl%local_dim)
+!       write(lun) vt%p(:self%ptnl%local_dim)
+       call file_write_vec_cnk(lun, vt%p, self%ptnl%local_dim)
        call stop_stopwatch(time_tmp)
     end do
     call start_stopwatch(time_tmp)
@@ -354,13 +368,12 @@ contains
     type(opr_m), intent(inout), optional :: op_init_wf
     integer :: lun=21, neig, i, jj, fh, mtotal, ierr
     type(type_vec_p) :: vt
-    integer(kdim) :: mq
+    integer(kdim) :: mq, ichunk
     real(8) :: x, dsize
     type(opr_m) :: op_copy ! dummy for sort-copy
 #ifdef MPI    
     integer(mpi_offset_kind) :: head, offset
     integer :: mympi_stat(mpi_status_size), ld
-    integer(kdim) :: ichunk
 #endif
 
     if (fname == c_no_init) return
@@ -405,12 +418,13 @@ contains
        offset = head + mq * kwf
        vt%p = 0.0_kwf
        call start_stopwatch(time_tmp)
-       do ichunk = 1, self%ptnr%local_dim, mpi_cnk
-          ld = int( min(mpi_cnk, self%ptnr%local_dim - ichunk + 1), kind=4 )
-          call mpi_file_read_at(fh, offset+(ichunk-1)*kwf, vt%p(ichunk), &
-               ld, mpi_kwf, mympi_stat, ierr)
-          if (ierr/=0) write(*,*) 'ERROR: bp_load_wf_srt',myrank,ierr
-       end do
+       ! do ichunk = 1, self%ptnr%local_dim, mpi_cnk
+       !    ld = int( min(mpi_cnk, self%ptnr%local_dim - ichunk + 1), kind=4 )
+       !    call mpi_file_read_at(fh, offset+(ichunk-1)*kwf, vt%p(ichunk), &
+       !         ld, mpi_kwf, mympi_stat, ierr)
+       !    if (ierr/=0) write(*,*) 'ERROR: bp_load_wf_srt',myrank,ierr
+       ! end do
+       call mympi_file_read_at_vec(fh, offset, vt%p, self%ptnr%local_dim)
        call stop_stopwatch(time_tmp)
 
        x = dot_product_global(vt, vt)
@@ -451,7 +465,8 @@ contains
     do i = 1, neig
        vt%p = 0.0_kwf
        call start_stopwatch(time_tmp)
-       read(lun) vt%p(:self%ptnr%local_dim)
+       ! read(lun) vt%p(:self%ptnr%local_dim)
+       call file_read_vec_cnk(lun, vt%p, self%ptnr%local_dim)
        call stop_stopwatch(time_tmp)
        call wf_alloc_vec(v(i), self%ptnl)
        if (present(op_init_wf)) then
@@ -607,17 +622,11 @@ contains
     character(len=maxchar) :: fn, cr
     integer(mpi_offset_kind) :: offset
     integer :: fh, mympi_stat(mpi_status_size)
-#ifndef SPARC
-    integer(kdim) :: l_dim
-#else
-    integer :: l_dim
-#endif
     real(8), allocatable :: ttmat(:,:)
     real(8) :: t
 
     allocate( ttmat(nv, nv) )
     ttmat = tmat(:nv, :nv)
-    l_dim = ndim
 
 
     call mpi_allreduce(ndim, max_ndim, 1, mpi_kdim, &
@@ -647,8 +656,9 @@ contains
     if (mod_lv_hdd == 2) ist = nv - 1
 
     do i = ist, nv
-       call mpi_file_write_at(fh, offset + max_ndim*kwf*myrank, &
-            vec(i)%p, l_dim, mpi_kwf, mympi_stat, ierr)
+       !  call mpi_file_write_at(fh, offset + max_ndim*kwf*myrank, &
+       !      vec(i)%p, l_dim, mpi_kwf, mympi_stat, ierr)
+       call mympi_file_write_at_vec(fh, offset + max_ndim*kwf*myrank, vec(i)%p, ndim)
        offset = offset + max_ndim*kwf*nprocs
     end do
 
@@ -679,22 +689,16 @@ contains
     real(8), intent(inout) :: tmat(:,:), sum_rule
 #ifdef MPI    
     integer :: ierr, i, ist
-    integer(kdim) :: max_ndim
+    integer(kdim) :: max_ndim, ichunk
     character(len=maxchar) :: fn, cr
     integer(mpi_offset_kind) :: offset
     integer :: fh, mympi_stat(mpi_status_size)
-#ifndef SPARC
-    integer(kdim) :: l_dim
-#else
-    integer :: l_dim
-#endif
     real(8), allocatable :: ttmat(:,:)
     real(8) :: t
 
 
     write(cr, '(i0)') nprocs
     fn = trim(fn_base_dump) // trim(cr)
-    l_dim = ndim
 
     call start_stopwatch(time_tmp, is_reset=.true., is_mpi_barrier=.true.)
 
@@ -726,9 +730,9 @@ contains
 
     do i = ist, nv
        if (.not. associated(vec(i)%p)) call allocate_l_vec( vec(i)%p, ndim )
-
-       call mpi_file_read_at(fh, offset + max_ndim*kwf*myrank, &
-            vec(i)%p, l_dim, mpi_kwf, mympi_stat, ierr)
+       ! call mpi_file_read_at(fh, offset + max_ndim*kwf*myrank, &
+       !     vec(i)%p, l_dim, mpi_kwf, mympi_stat, ierr)
+       call mympi_file_read_at_vec(fh, offset + max_ndim*kwf*myrank, vec(i)%p, ndim)
        offset = offset + max_ndim*kwf*nprocs
     end do
 
@@ -751,41 +755,95 @@ contains
 
 
 
+#ifdef MPI
+  subroutine mympi_file_write_at_vec(fh, offset, v, ndim)
+    integer, intent(in) :: fh
+    integer(mpi_offset_kind), intent(in) :: offset
+    real(kwf), intent(in) :: v(:)
+    integer(kdim), intent(in) :: ndim
+    integer(kdim) :: ichunk
+    integer :: mympi_stat(mpi_status_size), ld, ierr
+    
+    do ichunk = 1, ndim, mpi_cnk
+       ld = int( min(mpi_cnk, ndim - ichunk + 1), kind=4 )
+       call mpi_file_write_at( fh, offset+(ichunk-1)*kwf, v(ichunk), &
+            ld, mpi_kwf, mympi_stat, ierr )
+       if ( ierr /= 0 ) write(*,*) "error mpi_write_read_at", myrank, ierr
+    end do
+  end subroutine mympi_file_write_at_vec
 
 
+  subroutine mympi_file_read_at_vec(fh, offset, v, ndim)
+    integer, intent(in) :: fh
+    integer(mpi_offset_kind), intent(in) :: offset
+    real(kwf), intent(out) :: v(:)
+    integer(kdim), intent(in) :: ndim
+    integer(kdim) :: ichunk
+    integer :: mympi_stat(mpi_status_size), ld, ierr
 
-  subroutine dump_snapshot_mpi_block(nv, vec, ndim, tmat)
-    ! dump snapshot in single file with MPI-IO for block Lanczos
+    do ichunk = 1, ndim, mpi_cnk
+       ld = int( min(mpi_cnk, ndim - ichunk + 1), kind=4 )
+       call mpi_file_read_at(fh, offset+(ichunk-1)*kwf, v(ichunk), &
+            ld, mpi_kwf, mympi_stat, ierr)
+       if (ierr/=0) write(*,*) 'ERROR: mpi_file_read_at ',myrank,ierr
+    end do
+  end subroutine mympi_file_read_at_vec
+  
+#endif
+
+
+  subroutine file_write_vec_cnk(lun, v, ndim)
+    integer, intent(in) :: lun
+    real(kwf), intent(in) :: v(:)
+    integer(kdim), intent(in) :: ndim
+    integer(kdim) :: ichunk, mq
+    
+    do ichunk = 1, ndim, mpi_cnk
+       mq = min(mpi_cnk, ndim - ichunk + 1) + ichunk - 1
+       write(lun) v(ichunk:mq)
+    end do
+  end subroutine file_write_vec_cnk
+
+  subroutine file_read_vec_cnk(lun, v, ndim)
+    integer, intent(in) :: lun
+    real(kwf), intent(out) :: v(:)
+    integer(kdim), intent(in) :: ndim
+    integer(kdim) :: ichunk, mq
+
+    do ichunk = 1, ndim, mpi_cnk
+       mq = min(mpi_cnk, ndim - ichunk + 1) + ichunk - 1
+       read(lun) v(ichunk:mq)
+    end do
+  end subroutine file_read_vec_cnk
+
+
+  subroutine dump_snapshot_block(nv, vec, ndim, tmat)
+    ! dump snapshot in a single file for block Lanczos
     integer, intent(in) :: nv
     real(kwf), intent(in) :: vec(:,:)
     integer(kdim), intent(in) :: ndim
     real(8), intent(in) :: tmat(:,:)
-#ifdef MPI    
-    integer :: ierr, i, ist
-    integer(kdim) :: max_ndim
+    real(8), allocatable :: ttmat(:,:)
     character(len=maxchar) :: fn, cr
+    real(8) :: t, sz
+    integer :: ierr, i, ist, lun=22
+#ifdef MPI    
+    integer(kdim) :: max_ndim
     integer(mpi_offset_kind) :: offset
     integer :: fh, mympi_stat(mpi_status_size)
-#ifndef SPARC
-    integer(kdim) :: l_dim
-#else
-    integer :: l_dim
 #endif
-    real(8), allocatable :: ttmat(:,:)
-    real(8) :: t
-
-    allocate( ttmat(nv, nv) )
-    ttmat = tmat(:nv, :nv)
-    l_dim = ndim
-
-
-    call mpi_allreduce(ndim, max_ndim, 1, mpi_kdim, &
-         mpi_max, mpi_comm_world, ierr)
 
     write(cr, '(i0)') nprocs
     fn = trim(fn_base_dump) // trim(cr)
 
+    allocate( ttmat(nv, nv) )
+    ttmat = tmat(:nv, :nv)
+
     call start_stopwatch(time_dump)
+
+#ifdef MPI
+    call mpi_allreduce(ndim, max_ndim, 1, mpi_kdim, &
+         mpi_max, mpi_comm_world, ierr)
 
     call mpi_file_open(mpi_comm_world, fn, &
          ior(mpi_mode_create, mpi_mode_wronly), mpi_info_null, fh, ierr)
@@ -804,49 +862,63 @@ contains
     ist = 1
 
     do i = ist, nv
-       call mpi_file_write_at(fh, offset + max_ndim*kwf*myrank, &
-            vec(:,i), l_dim, mpi_kwf, mympi_stat, ierr)
+       ! call mpi_file_write_at(fh, offset + max_ndim*kwf*myrank, &
+       !      vec(:,i), l_dim, mpi_kwf, mympi_stat, ierr)
+       call mympi_file_write_at_vec(fh, offset + max_ndim*kwf*myrank, vec(:,i), ndim)
        offset = offset + max_ndim*kwf*nprocs
     end do
 
     call mpi_file_close(fh, ierr)
+    sz = dble(offset)
+
+#else /* MPI */
+
+    call start_stopwatch(time_io_write)
+    open(lun, file=fn, form='unformatted')
+    write(lun) nv
+    write(lun) ttmat(:,:)
+    ! write(lun) vec(:,:nv)    
+    do i = 1, nv
+       call file_write_vec_cnk(lun, vec(:,i), ndim)
+    end do
+    close(lun)
+    call stop_stopwatch(time_io_write)
+
+    sz = 4d0 + 8d0*nv**2 + kwf*dble(ndim)*nv     
+
+#endif /* MPI */
 
     call stop_stopwatch(time_dump, time_last=t)
 
     if (myrank==0) write(*,'(a,f9.3,x,a,f9.3,a/)') &
          "time dump_snapshot I/O: ", t, trim(fn), &
-         dble(offset)/t/(1024.d0**3), " GB/s"
+         dble(sz)/t/(1024.d0**3), " GB/s"
+    
+  end subroutine dump_snapshot_block
 
-#endif /* MPI */
-  end subroutine dump_snapshot_mpi_block
 
-
-  subroutine load_snapshot_mpi_block(nv, vec, ndim, tmat)
-    ! load snapshot in single file by MPI-IO for block Lanczos
-    integer, intent(inout) :: nv
+  subroutine load_snapshot_block(nv, vec, ndim, tmat)
+    ! load snapshot in single file for block Lanczos
+    integer, intent(out) :: nv
     real(kwf), intent(out) :: vec(:,:)
     integer(kdim), intent(in) :: ndim
-    real(8), intent(inout) :: tmat(:,:)
-#ifdef MPI    
-    integer :: ierr, i, ist
-    integer(kdim) :: max_ndim
+    real(8), intent(out) :: tmat(:,:)
+    integer :: ierr, i, ist, lun=22
     character(len=maxchar) :: fn, cr
+    real(8) :: t, sz
+#ifdef MPI    
+    real(8), allocatable :: ttmat(:,:)
+    integer(kdim) :: max_ndim
     integer(mpi_offset_kind) :: offset
     integer :: fh, mympi_stat(mpi_status_size)
-#ifndef SPARC
-    integer(kdim) :: l_dim
-#else
-    integer :: l_dim
-#endif
-    real(8), allocatable :: ttmat(:,:)
-    real(8) :: t
-
+#endif     
 
     write(cr, '(i0)') nprocs
     fn = trim(fn_base_dump) // trim(cr)
-    l_dim = ndim
 
     call start_stopwatch(time_tmp, is_reset=.true., is_mpi_barrier=.true.)
+
+#ifdef MPI    
 
     call mpi_file_open(mpi_comm_world, fn, &
          mpi_mode_rdonly, mpi_info_null, fh, ierr)
@@ -860,7 +932,8 @@ contains
          max_ndim, 1,     mpi_kdim,    mympi_stat, ierr)
     offset = offset + kdim
 
-    if (ndim > max_ndim) stop 'ERROR: load_snapshot_mpi_sf'
+    if (ndim > max_ndim) stop 'ERROR: load_snapshot_mpi'
+
     allocate( ttmat(nv, nv) )
 
     call mpi_file_read_at(fh, offset, &
@@ -869,25 +942,45 @@ contains
 
     tmat(:nv,:nv) = ttmat
     deallocate(ttmat)
+    
 
     ist = 1
 
     do i = ist, nv
-       call mpi_file_read_at(fh, offset + max_ndim*kwf*myrank, &
-            vec(:,i), l_dim, mpi_kwf, mympi_stat, ierr)
+       ! call mpi_file_read_at(fh, offset + max_ndim*kwf*myrank, &
+       !      vec(:,i), l_dim, mpi_kwf, mympi_stat, ierr)
+       call mympi_file_read_at_vec(fh, offset + max_ndim*kwf*myrank, vec(:,i), ndim)
        offset = offset + max_ndim*kwf*nprocs
     end do
 
     call mpi_file_close(fh, ierr)
+    sz = dble(offset)
+
+#else
+
+    call start_stopwatch(time_io_read)
+    open(lun, file=fn, form='unformatted')
+    read(lun) nv
+    read(lun) tmat(:nv, :nv)
+    ! read(lun) vec(:,:nv)
+    do i = 1, nv
+       call file_read_vec_cnk(lun, vec(:,i), ndim)
+    end do
+    close(lun)
+    call stop_stopwatch(time_io_read)
+    
+    sz = 4d0 + 8d0*nv**2 + kwf*dble(ndim)*nv     
+
+#endif /* MPI */
+
 
     call stop_stopwatch(time_tmp, time_last=t)
 
     if (myrank==0) write(*,'(a,f9.3,x,a,f9.3,a/)') &
          "time load_snapshot I/O: ", t, trim(fn), &
-         dble(offset)/t/(1024.d0**3), " GB/s"
+         sz/t/(1024.d0**3), " GB/s"
 
-#endif /* MPI */
-  end subroutine load_snapshot_mpi_block
+  end subroutine load_snapshot_block
   
 
 end module bp_io

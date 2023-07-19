@@ -9,6 +9,7 @@ program count_dim
   use constant, only: kdim, kmbit, kwf, maxchar
   use model_space, only: read_sps, set_n_ferm, n_morb_pn, &
        n_jorb_pn, n_jorb, n_ferm, skip_comment, jorbn, jorb
+  !$ use omp_lib, only : omp_get_max_threads, omp_get_thread_num
   implicit none
   integer, parameter :: lunint=11, lunptn=12
   character(len=maxchar) :: fn_int, fn_ptn, c_num
@@ -23,6 +24,7 @@ program count_dim
   integer :: iargc
 
   if (iargc() < 2) stop "usage: ./count_dim foo.snt bar.ptn "
+  !$ write(*,'(1a,1i3,/)') "OpenMP  # of threads=", omp_get_max_threads()
 
   n = 0
   call getarg(1, c_num) 
@@ -143,6 +145,11 @@ contains
 
     ndim_mat(:,:,:) = 0
     do ipn = 1, 2
+       if (n_jorb(ipn)==0) then 
+          ndim_mat(0, 1, ipn) = 1
+          cycle
+       end if
+
        !$omp parallel do private(id, i, mlist_max, mlist, nd, mm) &
        !$omp schedule(dynamic)
        do id = 1, n_id_pn(ipn)
