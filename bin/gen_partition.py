@@ -807,7 +807,8 @@ def main(
         + "      0 : No truncation (default) \n" \
         + "      1 : particle-hole truncation for orbit(s) \n" \
         + "      2 : hw truncation \n" \
-        + "      3 : Both (1) and (2) \n")
+        + "      3 : Both (1) and (2) \n" \
+        + "      4 : Monopole-based partition truncation ")
 
     ans = raw_input_save()
     ans = ans.rstrip()
@@ -853,6 +854,7 @@ def main(
         print(' specify # of orbit(s) and min., max. occupation numbers ' \
             + 'for restriction')
         orb_list, t_list = [], []
+        
         while True:
             ans = raw_input_save(
                 "\n # of orbit(s) for restriction?  (<CR> to quit): ")
@@ -867,23 +869,26 @@ def main(
             if len(ans) != 2: raise 'read error'
             t_list.append( [int(i) for i in ans] )
 
-        if truncation_mode==1 and len(orb_list)>0:
+        if (truncation_mode == 1) and len(orb_list) > 0:
             # class_ms.set_ph_truncation(orb_list[:], t_list[:])
             class_ms.set_hw_for_phtrunc(orb_list[0], t_list[0])
-            if len(orb_list)>1:
+            if len(orb_list) > 1:
                class_ms.set_ph_truncation(orb_list[1:], t_list[1:])
+        
         else: # truncation_mode == 3
             class_ms.set_ph_truncation(orb_list, t_list)
+        
         fpout.write("# particle-hole truncation orbit(s) : min., max.\n")
-        for orb,t in zip(orb_list, t_list):
+
+        for orb, t in zip(orb_list, t_list):
             fpout.write("#      " + str([i+1 for i in orb]) + " :  " + \
                             str(t[0]) + " " + str(t[1]) + "\n")
     if truncation_mode == 4:
         ans = raw_input_save(
-            " monopole trunc, threashold energy (relative to min): " )
+            " monopole trunc, threshold energy (relative to min): "
+        )
         thd = float(ans)
-        fpout.write( "# monopole-based partition truncation, thd= %10.5f\n"
-                     %  thd)
+        fpout.write("# monopole-based partition truncation, thd= %10.5f\n" %  thd)
         class_ms.set_monopole_truncation(filename_interaction, thd)
 
     sys.stdout.write( "generating partition file ..." )
