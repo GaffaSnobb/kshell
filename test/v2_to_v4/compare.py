@@ -1,11 +1,17 @@
+import sys
 import kshell_utilities as ksutil
 import numpy as np
 
 def main():
-    Ne22_v2 = ksutil.loadtxt(path="Ne22_v2/", load_and_save_to_file=False)
-    Ne22_v4 = ksutil.loadtxt(path="Ne22_v4/", load_and_save_to_file=False)
-    V50_v2 = ksutil.loadtxt(path="V50_v2/", load_and_save_to_file=False)
-    V50_v4 = ksutil.loadtxt(path="V50_v4/", load_and_save_to_file=False)
+    if sys.argv[1] == "long":
+        load_and_save_to_file = False
+    else:
+        load_and_save_to_file = True
+    
+    Ne22_v2 = ksutil.loadtxt(path="Ne22_v2/", load_and_save_to_file=load_and_save_to_file)
+    Ne22_v4 = ksutil.loadtxt(path="Ne22_v4/", load_and_save_to_file=load_and_save_to_file)
+    V50_v2 = ksutil.loadtxt(path="V50_v2/", load_and_save_to_file=load_and_save_to_file)
+    V50_v4 = ksutil.loadtxt(path="V50_v4/", load_and_save_to_file=load_and_save_to_file)
     Ne22_dev = ksutil.loadtxt(path="Ne22_dev/", load_and_save_to_file=False)
     V50_dev = ksutil.loadtxt(path="V50_dev/", load_and_save_to_file=False)
 
