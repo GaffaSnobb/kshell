@@ -6,6 +6,7 @@ snbg1.snt
 *.txt
 *.wav
 *.wav.bak
+tmp/
 
 # Created by https://www.toptal.com/developers/gitignore/api/fortran,macos,python,linux
 # Edit at https://www.toptal.com/developers/gitignore?templates=fortran,macos,python,linux
