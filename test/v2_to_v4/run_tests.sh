@@ -32,6 +32,8 @@ cp kshell.exe ../test/v2_to_v4/Ne22_dev/
 cp transit.exe ../test/v2_to_v4/Ne22_dev/
 cp kshell.exe ../test/v2_to_v4/V50_dev/
 cp transit.exe ../test/v2_to_v4/V50_dev/
+cp kshell.exe ../test/v2_to_v4/V51_dev/
+cp transit.exe ../test/v2_to_v4/V51_dev/
 cd ../test/v2_to_v4
 
 if [ "$1" == "long" ]; then
@@ -76,6 +78,13 @@ rm *.wav
 rm log_*
 rm summary_*
 bash V50_gxpf1a.sh
+cd ..
+
+cd V51_dev
+rm *.wav
+rm log_*
+rm summary_*
+bash V51_gxpf1a.sh
 cd ..
 
 python compare.py "$1"
