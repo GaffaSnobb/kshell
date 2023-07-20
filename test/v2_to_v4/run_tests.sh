@@ -1,3 +1,27 @@
+#!/bin/bash
+
+cd v2/src
+if [ ! -f "kshell.exe" -o ! -f "transit.exe" ]; then
+	make clean
+	make -j4
+fi
+cp kshell.exe ../../Ne22_v2
+cp transit.exe ../../Ne22_v2
+cp kshell.exe ../../V50_v2
+cp transit.exe ../../V50_v2
+cd ../..
+
+cd v4/src
+if [ ! -f "kshell.exe" -o ! -f "transit.exe" ]; then
+	make clean
+	make -j4
+fi
+cp kshell.exe ../../Ne22_v4
+cp transit.exe ../../Ne22_v4
+cp kshell.exe ../../V50_v4
+cp transit.exe ../../V50_v4
+cd ../..
+
 cd Ne22_v2
 rm *.wav
 rm log_*
