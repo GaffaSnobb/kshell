@@ -528,6 +528,8 @@ def exec_string(mode: str, input_filename: str, log_filename: str) -> str:
         return 'mpiexec' + exec_command + input_filename + ' > ' + log_filename + '  \n\n'
     elif is_mpi == 'betzy': 
         return f"mpiexec{exec_command}{input_filename} > {log_filename}  \n\n"
+    elif is_mpi == 'fox': 
+        return f"nice {exec_command}{input_filename} > {log_filename}  \n\n"
         # return 'mpiexec' + exec_command + input_filename + ' > ' + log_filename + '  \n\n'
     elif is_mpi:
         return 'mpiexec -of ' + log_filename + exec_command + input_filename + ' \n\n'
