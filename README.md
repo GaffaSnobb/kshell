@@ -99,7 +99,7 @@ Code downloaded from https://sites.google.com/alumni.tsukuba.ac.jp/kshell-nuclea
   Remember that preprocessor lines cannot be indented. I had a problem with program crashes due to `MPI` errors and this was simply because three preprocessor lines were indented and therefore didnt compile properly.
   
 #### WARNING: norm of initital vector too small *** decrease mpi_cnk *** / failed to read wf
-  There is a parameter in `constant.f90` called `mpi_cnk` but I have had no luck in removing this error message by reducing the numeric value of this parameter. I have solved the issue by re-calculating the `.wav` file in question, and at one point I had to re-run the calculation of the `.wav` with `n_block = 0`.
+  There is a parameter in `constant.f90` called `mpi_cnk`, try to reduce it by a factor of 2 and re-generate the `.wav` in question. Remember to recompile KSHELL and use the new `kshell.exe`. Most of the times however, reducing `mpi_cnk` has had no effect, in which case I have solved the issue by re-calculating the `.wav` file in question using `n_block = 0`.
 
 </p>
 </details>
@@ -124,8 +124,3 @@ Mostly outdated info.
 
 </p>
 </details>
-
-### Notes to self
-MPI compile wrapper mpiifort
-intel/2020b og Python/3.8.6-GCCcore-10.2.0
-100 lowest states for spins 0 to 14 took 39 minutes on Fram with 32 nodes
