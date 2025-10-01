@@ -1,5 +1,34 @@
 from typing import List
 
+def fox(
+    shell_filename: str,
+    sigma2_project_name: str,
+    sigma2_n_days: int,
+    sigma2_n_hours: int,
+    sigma2_n_minutes: int,
+    n_nodes: int,
+    ) -> str:
+    """
+    Generate SLURM commands for the Fox computing cluster at UiO.
+    """
+    job_commands = '#!/bin/bash\n'
+    job_commands += f'#SBATCH --job-name={shell_filename[:-3]}\n'
+    job_commands += f'#SBATCH --account={sigma2_project_name}\n'
+    job_commands += '## Syntax is d-hh:mm:ss\n'
+    job_commands += f'#SBATCH --time={sigma2_n_days}-{sigma2_n_hours:02d}:{sigma2_n_minutes:02d}:00\n'
+    job_commands += f'#SBATCH --nodes={n_nodes}\n'
+
+    job_commands += f'#SBATCH --ntasks=128\n'
+    job_commands += 'module --quiet purge \n'
+    job_commands += 'module load foss/2025a\n'
+    job_commands += 'set -o errexit \n'
+    job_commands += 'set -o nounset\n'
+    job_commands += 'export OMP_PLACES=cores\n'
+    job_commands += f'export OMP_NUM_THREADS=128\n'
+    job_commands += 'export GFORTRAN_UNBUFFERED_PRECONNECTED=y\n'
+    
+    return job_commands
+
 def betzy(
     shell_filename: str,
     sigma2_project_name: str,
@@ -9,9 +38,7 @@ def betzy(
     n_nodes: int,
     n_tasks_per_node: int,
     n_cpus_per_task,
-    sigma2_user_email: str,
     type_of_betzy_job: str,
-    omp_num_threads: int
     ) -> str:
     """
     Generate SLURM commands for Betzy.
@@ -25,7 +52,6 @@ def betzy(
     job_commands += f'#SBATCH --ntasks-per-node={n_tasks_per_node} \n'
     job_commands += f'#SBATCH --cpus-per-task={n_cpus_per_task} \n'
     job_commands += '#SBATCH --mail-type=ALL \n'
-    job_commands += f'#SBATCH --mail-user={sigma2_user_email} \n'
     
     if type_of_betzy_job != "normal":
         job_commands += f'#SBATCH --qos={type_of_betzy_job} \n'
@@ -35,9 +61,6 @@ def betzy(
     job_commands += 'module load Python/3.8.6-GCCcore-10.2.0 \n'
     job_commands += 'set -o errexit  \n'
     job_commands += 'set -o nounset \n'
-    
-    if omp_num_threads is not None:
-        job_commands += f'export OMP_NUM_THREADS={omp_num_threads} \n'
     
     return job_commands
 
@@ -50,7 +73,6 @@ def fram(
     n_nodes: int,
     n_tasks_per_node: int,
     n_cpus_per_task,
-    sigma2_user_email: str,
     type_of_fram_job: str,
     ) -> str:
     """
@@ -65,7 +87,6 @@ def fram(
     job_commands += f'#SBATCH --ntasks-per-node={n_tasks_per_node} \n'
     job_commands += f'#SBATCH --cpus-per-task={n_cpus_per_task} \n'
     job_commands += '#SBATCH --mail-type=ALL \n'
-    job_commands += f'#SBATCH --mail-user={sigma2_user_email} \n'
     
     if type_of_fram_job != "normal":
         job_commands += f'#SBATCH --qos={type_of_fram_job} \n'

@@ -1372,9 +1372,9 @@ def main():
         'n', 'Yes', 'No', ''
     ]
     # Sigma2 specifics:
-    list_param += ['fram', 'betzy']  # Added by jonkd.
-    n_tasks_per_node = 8    # The number of MPI ranks per node. Default value. May be overwritten.
-    n_cpus_per_task = 16    # The number of OpenMP threads per MPI rank. Default value. May be overwritten.
+    list_param += ['fram', 'betzy', 'fox']  # Added by jonkd.
+    n_tasks_per_node = 2    # The number of MPI ranks per node. Default value. May be overwritten.
+    n_cpus_per_task = 64    # The number of OpenMP threads per MPI rank. Default value. May be overwritten.
     
     type_of_fram_jobs_list = ["normal", "short", "devel"]
     fram_job_node_limits = {
@@ -1420,9 +1420,9 @@ def main():
             if (len(mpi_input_arr) == 1) or (mpi_input_arr[1].isdigit()): break
         print("\n *** Invalid input ***")
 
-    if (mpi_input_ans.split(",")[0] == "fram") or (mpi_input_ans.split(",")[0] == "betzy"):
+    if mpi_input_ans.split(",")[0] in ["fram", "betzy", "fox"]:
         """
-        Fetch Fram / Betzy Slurm input parameters. Added by jonkd.
+        Fetch Fram / Betzy / Fox Slurm input parameters. Added by jonkd.
         """
         print("Please input expected program runtime:")
         
@@ -1469,13 +1469,10 @@ def main():
                 continue
 
         sigma2_project_name = raw_input_save("project name (default NN9464K): ")
-        sigma2_user_email = raw_input_save("email (default jonkd@uio.no): ")
 
         # Set default values if no input is given.
         if sigma2_project_name == "":
             sigma2_project_name = "NN9464K"
-        if sigma2_user_email == "":
-            sigma2_user_email = "jonkd@uio.no"
 
         if mpi_input_ans.split(",")[0] == "fram":
             while True:
@@ -1531,7 +1528,7 @@ def main():
                     print("Please enter an integer.")
                     continue
             
-        if (mpi_input_ans.split(",")[0] == "fram") or (mpi_input_ans.split(",")[0] == "betzy"):
+        if mpi_input_ans.split(",")[0] in ["fram", "betzy"]:
             while True:
                 try:
                     msg = f"number of tasks per node (MPI ranks per node) (default {n_tasks_per_node}): "
@@ -1579,30 +1576,7 @@ def main():
                 except ValueError:
                     print("Please enter an integer.")
                     continue
-            
-            msg = "Double OMP_NUM_THREADS to force SMT? "
-            print(msg)
-            help_msg = "This option is applicable to Betzy where Slurm only lets us use the physical cores. "
-            help_msg += "Setting OMP_NUM_THREADS after the Slurm commands, tricks the system into letting us use as many OpenMP threads as we want, "
-            help_msg += "and by doubling it we enable usage of all virtual cores."
-            double_omp_yes_inputs = ["y", "yes", ""]
-            double_omp_no_inputs = ["n", "no", ""]
-            omp_num_threads = None
-            while True:
-                msg = "Double? (default 'yes', 'help' for info): "
-                double_omp_threads_input = raw_input_save(msg)
-                double_omp_threads_input = double_omp_threads_input.lower()
 
-                if double_omp_threads_input in double_omp_yes_inputs:
-                    omp_num_threads = int(n_cpus_per_task*2)
-                    break
-                elif double_omp_threads_input in double_omp_no_inputs:
-                    break
-                elif double_omp_threads_input == "help":
-                    print(help_msg)
-                    continue
-                else:
-                    continue
 
     if len(mpi_input_arr) >= 2:
         """
@@ -1640,6 +1614,8 @@ def main():
         print(txt + "on Fram@UiT with SLURM ")
     elif is_mpi == 'betzy': 
         print(txt + "on Betzy@NTNU with SLURM ")
+    elif is_mpi == 'fox': 
+        print(txt + "on Fox@UiO with SLURM ")
     elif is_mpi: 
         print(txt + 'K-computer/FX10 with PJM. ')
     else: 
@@ -1837,7 +1813,6 @@ def main():
                 n_nodes,
                 n_tasks_per_node,
                 n_cpus_per_task,
-                sigma2_user_email,
                 type_of_fram_job,
             )
 
@@ -1851,9 +1826,17 @@ def main():
                 n_nodes,
                 n_tasks_per_node,
                 n_cpus_per_task,
-                sigma2_user_email,
                 type_of_betzy_job,
-                omp_num_threads
+            )
+
+        elif is_mpi == 'fox': # This option is added by jonkd.
+            job_commands = job_schedulers.fox(
+                shell_filename,
+                sigma2_project_name,
+                sigma2_n_days,
+                sigma2_n_hours,
+                sigma2_n_minutes,
+                n_nodes,
             )
 
         else: # FX10
