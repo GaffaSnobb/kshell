@@ -7,6 +7,7 @@ def fox(
     sigma2_n_hours: int,
     sigma2_n_minutes: int,
     n_nodes: int,
+    mem_per_cpu: int | float,
     ) -> str:
     """
     Generate SLURM commands for the Fox computing cluster at UiO.
@@ -17,6 +18,7 @@ def fox(
     job_commands += '## Syntax is d-hh:mm:ss\n'
     job_commands += f'#SBATCH --time={sigma2_n_days}-{sigma2_n_hours:02d}:{sigma2_n_minutes:02d}:00\n'
     job_commands += f'#SBATCH --nodes={n_nodes}\n'
+    job_commands += f'#SBATCH --mem-per-cpu={mem_per_cpu}G\n'
 
     job_commands += f'#SBATCH --ntasks=128\n'
     job_commands += 'module --quiet purge \n'

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import sys, os, os.path, shutil, readline, re
+import sys, os, os.path, shutil, readline, re, ast
 from fractions import Fraction
 from typing import Tuple, List, Dict, TextIO
 from ast import literal_eval
@@ -1504,6 +1504,15 @@ def main():
                     print(betzy_job_description[type_of_betzy_job])
                     break
 
+        if mpi_input_ans.split(",")[0] == "fox":
+            while True:
+                mem_per_cpu = ast.literal_eval(raw_input_save("mem per cpu core (in GB): "))
+
+                if not isinstance(mem_per_cpu, (float, int)):
+                    continue
+
+                break
+
         if len(mpi_input_arr) == 1:
             while True:
                 try:
@@ -1831,12 +1840,13 @@ def main():
 
         elif is_mpi == 'fox': # This option is added by jonkd.
             job_commands = job_schedulers.fox(
-                shell_filename,
-                sigma2_project_name,
-                sigma2_n_days,
-                sigma2_n_hours,
-                sigma2_n_minutes,
-                n_nodes,
+                shell_filename = shell_filename,
+                sigma2_project_name = sigma2_project_name,
+                sigma2_n_days = sigma2_n_days,
+                sigma2_n_hours = sigma2_n_hours,
+                sigma2_n_minutes = sigma2_n_minutes,
+                n_nodes = n_nodes,
+                mem_per_cpu = mem_per_cpu,
             )
 
         else: # FX10
